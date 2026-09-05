@@ -9,26 +9,28 @@
 
         private void TauntWindow_Load(object sender, EventArgs e)
         {
-            // Sets random window title, image and size
-            Text = Global.tauntTitles[Global.rng.Next(Global.tauntTitles.Count)];
-            BackgroundImage = Global.tauntImages[Global.rng.Next(Global.tauntImages.Count)];
-            Size = new Size( Global.rng.Next(200, 400), Global.rng.Next(200, 400) );
-            MaximumSize = Size;
-            MinimumSize = Size;
+            try
+            {
+                Text = Global.tauntTitles[Global.RngNext(Global.tauntTitles.Count)];
+                BackgroundImage = Global.tauntImages[Global.RngNext(Global.tauntImages.Count)];
+                int w = Global.RngNext(200, 400);
+                int h = Global.RngNext(200, 400);
+                Size = new Size(w, h);
+                MaximumSize = Size;
+                MinimumSize = Size;
+            }
+            catch { }
 
-            // Random pos
             Global.RandomPosControl(this);
 
-            // Glitch Idle Effect
-            new Thread(async () => Global.GlitchIdle(this)) { IsBackground = true }.Start();
+            _ = Task.Run(() => Global.GlitchIdle(this));
 
-            // Closes after 4-10 seconds
-            new Thread(async () =>
+            _ = Task.Run(async () =>
             {
-                await Task.Delay(Global.rng.Next(4000, 10 * 1000));
-                if (IsDisposed) return;
-                this.Invoke(() => Dispose());
-            }) { IsBackground = true }.Start();
+                try { await Task.Delay(Global.RngNext(4000, 10 * 1000)); } catch { }
+                if (IsDisposed || !IsHandleCreated) return;
+                try { this.Invoke(() => { if (!IsDisposed) Dispose(); }); } catch { }
+            });
         }
     }
 }

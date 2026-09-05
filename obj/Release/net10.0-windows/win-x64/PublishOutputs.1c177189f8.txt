@@ -1,2 +1,0 @@
-C:\Users\Ixar\Desktop\aaaa\rans0m\bin\Release\net10.0-windows\publish\win-x64\ransom.pdb
-C:\Users\Ixar\Desktop\aaaa\rans0m\bin\Release\net10.0-windows\publish\win-x64\ransom.exe

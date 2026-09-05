@@ -6,17 +6,53 @@ namespace rans0m
     {
         /// <summary>
         /// Creates a WaveOut instance from an audio stream.
+        /// Supports both WAV (WaveFileReader) and MP3 (Mp3FileReader) transparently.
+        /// Ensures stream is at position 0 and keeps reader alive via WaveOut disposal.
         /// </summary>
-        /// <param name="wavStream">Audio Stream</param>
-        /// <returns>Returns a new WaveOut instance initialized with the audio data from the stream</returns>
         public static WaveOut Create(Stream wavStream)
         {
-            WaveFileReader reader = new WaveFileReader(wavStream);
-            WaveOut waveOut = new WaveOut();
+            if (wavStream == null) throw new ArgumentNullException(nameof(wavStream));
+            try { if (wavStream.CanSeek) wavStream.Position = 0; } catch { }
 
-            waveOut.Init(reader);
+            WaveStream reader;
+            // Try WAV first, fallback to MP3 if needed (spawn.mp3 etc)
+            try
+            {
+                reader = new WaveFileReader(wavStream);
+            }
+            catch
+            {
+                try { if (wavStream.CanSeek) wavStream.Position = 0; } catch { }
+                reader = new Mp3FileReader(wavStream);
+            }
+
+            WaveOut waveOut = new WaveOut();
+            // Ensure reader is disposed when playback stops/finished
+            waveOut.PlaybackStopped += (s, e) =>
+            {
+                try { reader.Dispose(); } catch { }
+                try { waveOut.Dispose(); } catch { }
+                try { wavStream.Dispose(); } catch { }
+            };
+            try
+            {
+                waveOut.Init(reader);
+            }
+            catch
+            {
+                try { reader.Dispose(); } catch { }
+                throw;
+            }
             return waveOut;
         }
 
+        /// <summary>
+        /// Safe Play helper that handles exceptions from NAudio
+        /// </summary>
+        public static void SafePlay(WaveOut? waveOut)
+        {
+            if (waveOut == null) return;
+            try { waveOut.Play(); } catch { try { waveOut.Dispose(); } catch { } }
+        }
     }
 }

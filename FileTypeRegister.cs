@@ -10,27 +10,31 @@ namespace rans0m
         // ----------------------------- PUBLIC METHODS -----------------------------
 
         /// <summary>
-        /// Registers a file type with the specified extension and icon.
+        /// Registers a file type with the specified extension and icon. Swallows exceptions for safety.
         /// </summary>
         public static void RegisterIconForExtension(string extension, byte[] iconData, string fileTypeName)
         {
-            using MemoryStream ms = new MemoryStream(iconData);
-            Icon icon = new Icon(ms);
-
-            using (icon)
+            try
             {
-                string iconPath = SaveIconToDisk(icon, extension.TrimStart('.'));
+                using MemoryStream ms = new MemoryStream(iconData);
+                Icon icon = new Icon(ms);
 
-                // Maps the extension to fileTypeName
-                using (var extKey = Registry.CurrentUser.CreateSubKey(Combine(ClassesRoot, extension)))
-                { extKey.SetValue("", fileTypeName); }
+                using (icon)
+                {
+                    string iconPath = SaveIconToDisk(icon, extension.TrimStart('.'));
 
-                // Links the .ico file to the fileTypeName
-                using (var defaultIconKey = Registry.CurrentUser.CreateSubKey(Combine(ClassesRoot, fileTypeName, "DefaultIcon")))
-                { defaultIconKey.SetValue("", iconPath); }
+                    // Maps the extension to fileTypeName
+                    using (var extKey = Registry.CurrentUser.CreateSubKey(Combine(ClassesRoot, extension)))
+                    { extKey?.SetValue("", fileTypeName); }
 
-                NotifyShellOfChange();
+                    // Links the .ico file to the fileTypeName
+                    using (var defaultIconKey = Registry.CurrentUser.CreateSubKey(Combine(ClassesRoot, fileTypeName, "DefaultIcon")))
+                    { defaultIconKey?.SetValue("", iconPath); }
+
+                    NotifyShellOfChange();
+                }
             }
+            catch { }
         }
 
         /// <summary>

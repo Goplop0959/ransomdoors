@@ -11,17 +11,22 @@ namespace rans0m
 
         private void ThankYou_Load(object sender, EventArgs e)
         {
-            Global.RansomPayed();
-            WaveOut thankYouSfx = SoundHelper.Create(Properties.Resources.cash);
-            thankYouSfx.Play();
+            try { Global.RansomPayed?.Invoke(); } catch { }
+            try
+            {
+                WaveOut thankYouSfx = SoundHelper.Create(Properties.Resources.cash);
+                thankYouSfx.Play();
+            }
+            catch { }
 
             Global.CenterControl(this);
 
-            Task.Delay(3000).ContinueWith(_ =>
+            _ = Task.Run(async () =>
             {
-                Invoke(() => Dispose());
+                await Task.Delay(3000);
+                if (IsDisposed || !IsHandleCreated) return;
+                try { this.Invoke(() => { if (!IsDisposed) Dispose(); }); } catch { }
             });
-
         }
     }
 }

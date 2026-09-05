@@ -1,80 +1,74 @@
-# RANS0M
+# RANS0M — Safe Fork
 
-A fan-made recreation of the RANSOM (A-90) entity from the Roblox game
-*Doors*, as a Windows desktop app. It randomly pops the entity's face up on
-your screen, you need to stop moving your mouse and stay off the keyboard, or it
-"infects" your PC: 8 gold coin files get scattered around your user folders,
-and you have to drag at least 5 of them onto the ransom window before the timer runs
-out. Fail to pay in time and it crashes your computer.
+> **Fork** of **[Ixars/ransomdoors](https://github.com/Ixars/ransomdoors)** by **Goplop0959**. Original concept, entity design and base code by **Ixars** — this fork keeps the original spirit but makes it **safe, debugged and standalone**.
+> 
+> **Doors** by **LSPLASH** — RANSOM/A-90 is their original entity. Unofficial fan recreation, not affiliated.
 
-This was built for fun, it's kind of poorly coded.
-Right now the only noticable bug is that the ransom window doesn't always stay on top of other windows, but it should be fine for the most part. It can't go on top of fullscreen apps.
+## What changed vs original
 
-## Read this before running it
+- **No shutdown / no BSOD.** On loss it opens `https://www.youtube.com/watch?v=dQw4w9WgXcQ` (requested `https://www.yout-ube.com/watch?v=dQw4w9WgXcQ` normalized) in default browser (`Global.cs:47` `OpenRickRoll`) — `IntoCriticalProcess`/`shutdown /s /t 0` (`Global.cs:196`) removed.
+- **Standalone single-file EXE.** `rans0m.csproj:15` `PublishSingleFile`/`SelfContained`/`win-x64`/`IncludeNativeLibrariesForSelfExtract` — `C:\Ransom_A-90\RansomDoors-Safe.exe` (~70 MB) needs no .NET installed.
+- **Konami kill/win:** `Up Up Down Down Left Right Left Right B A Shift` (Shift = Start) via `KonamiCodeDetector.cs:10` — triggers win then **stops the exe** (`Program.cs:37` `Environment.Exit`).
+- **First ransom 9-15s** (`Overlay.cs:573`), then 78-600s (`Global.cs:10` `26*3`/`10*60`).
+- **Mouse 1cm threshold** (`Overlay.cs:73` `dist>40px` vs old `!=`), single-ransom gate (`Overlay.cs:453` `Interlocked`), face hidden during idle (`Overlay.cs:546`), `Ransomed` top-most fix (`Ransomed.cs:36`, `Overlay.cs:680`).
+- **Time left fixed** and **500 coins with 25/30/50/75/100** values (`GoldCoinManager.cs:44` random, `Ransomed.cs:91` deduct).
+- **Desktop prank (reversible):** on infection renames Desktop files to `.Ransom`, swaps icons to `file:///C:/Ransom_A-90/Random_A-90.gif` (converted to `ICO`/`BMP` for display, `DesktopRansomManager.cs:160`), changes folders via `desktop.ini`, wallpaper via `SystemParametersInfo`, and for images creates GIF placeholder at original path. All ops per-file `try` and recorded in `C:\Ransom_A-90\restore.json` (`DesktopRansomManager.cs:18`). On win or next launch if `restore.json` exists it auto-restores and deletes JSON. Also tries app window icons for non-critical processes (`EnumWindows`/`WM_SETICON`).
+- Bugfixes: thread-safe RNG (`Global.cs:32`), `KeyboardHook` `GetModuleHandle(null)` for single-file (`KeyboardHook.cs:19`), `SoundHelper` MP3 fallback, registry/icon leaks, font leaks, `Opacity` fix, etc.
 
-This app **really** shuts down or crashes your computer if you don't pay
-the fake ransom in time. That's not a metaphor, it calls `shutdown /s /t 0`,
-or (if elevated) marks itself as a critical process so that closing it takes
-Windows down with it. This is intentional, but it means
-you should:
+## Original warning (now safe)
 
-- Only run it on a machine you own, save your work first, and expect it to
-  actually shut down or crash at some point.
-- Not run it on anyone else's computer without them knowing exactly what
-  it does and agreeing to it.
-
-It is not malware in the sense of trying to steal anything, hide itself, or
-spread, it doesn't touch your files besides dropping/deleting its own
-harmless `.gold` marker files, and it's fully open source so you can check
-that yourself. See [LICENSE.md](LICENSE.md) for the full terms and
-disclaimer.
+Original really shut down / BSOD'd on failure. This fork **does not** — it rickrolls and reverts Desktop changes via `restore.json`. Still only run on your own machine and close via tray or Konami.
 
 ## Requirements
 
-- Windows (uses Win32 hooks, `shutdown.exe`, the registry, etc. This
-  won't run anywhere else)
-- [.NET 10 SDK](https://dotnet.microsoft.com/) or newer
-- Visual Studio 2022+ (optional, for the WinForms designer) or just the
-  `dotnet` CLI
+- Windows 10/11 (Win32 hooks, registry, wallpaper)
+- [.NET SDK 9.0+](https://dotnet.microsoft.com/) (project targets `net9.0-windows`, `net10.0-windows` also works with .NET 10 SDK) — standalone EXE needs no runtime
+- Visual Studio 2022+ optional
 
-## Building & running
+## Building & running (no popup, HTTPS with PAT)
 
+```bash
+# HTTPS with PAT (no git popup) — replace TOKEN
+git clone https://Goplop0959:TOKEN@github.com/Goplop0959/ransomdoors.git
+cd ransomdoors
+dotnet build -c Release
+dotnet run --project rans0m.csproj
+
+# Standalone single-file (no .NET needed on target)
+dotnet publish -c Release -r win-x64 --self-contained true
+# -> bin/Release/net9.0-windows/win-x64/publish/ransom.exe (~70 MB)
+# or publish_final/ransom.exe -> copy to RansomDoors-Safe.exe
 ```
-git clone https://github.com/Ixars/ransomdoors
-cd rans0m
-dotnet build
-dotnet run
-```
 
-Or open `rans0m.slnx` in Visual Studio and hit F5.
+Or open `rans0m.slnx` in Visual Studio → Build → Publish → Folder, `Self-contained`, `Produce single file`.
 
-The app runs from a system tray icon (right-click it for a Close option,
-it's disabled while a ransom is active, so you can't just dodge it from the
-tray).
+App runs from tray (`RANS0M` icon, Close disabled while `underRansom`). `Random_A-90.gif` is auto-created from `ransom_idle` if missing at `C:\Ransom_A-90\Random_A-90.gif`.
 
 ## Configuration
 
-The main knobs live at the top of `Global.cs`:
+`Global.cs:10` `minRansomTime`/`maxRansomTime`, `tauntTitles`/`tauntImages`, `Properties/Resources.resx`.
 
-- `minRansomTime` / `maxRansomTime` — how often (in seconds) the entity can
-  randomly show up.
+## SSH
 
-Everything else (images, sounds, taunt window titles) is in
-`Properties/Resources.resx` and the `Resources/` folder if you want to swap
-them out.
+Ed25519 256-bit key generated for this fork:
+
+```
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINUIBrWIV3Eec4Zs8yYL/Lmp+uL7LMeX95afvfOdLVer Goplop0959@ransomdoors
+SHA256:SFvHH23nR8ycKqTuBUWQwEhfUBFWIOw3EeJZLgX0Gpg
+```
+
+Public key at `C:\Users\caden\.ssh\id_ed25519.pub`. Add to GitHub `Settings → SSH and GPG keys` if you want SSH remote:
+
+```bash
+git remote set-url origin git@github.com:Goplop0959/ransomdoors.git
+```
 
 ## Credits
 
-- **Doors** is made by **LSPLASH**. The RANSOM/A-90 entity, its name, look,
-  and concept are their original work — this project is an unofficial fan
-  recreation, not affiliated with or endorsed by LSPLASH. Go play the real
-  game.
-- Built with [NAudio](https://github.com/naudio/NAudio) for audio playback.
-- Sound effects and images are from the game, taken from the wikis.
+- **Original:** [Ixars/ransomdoors](https://github.com/Ixars/ransomdoors) (Ixars)
+- **This fork:** Goplop0959 — safe rework, standalone, Konami, file-ransom revert, bugfixes
+- **NAudio** for audio, **Doors** by LSPLASH
 
 ## License
 
-Source-available, free to use/modify/redistribute for educational and
-non-commercial purposes, with credit required and reselling (original or
-modified) forbidden. Full terms in [LICENSE.md](LICENSE.md) — read it, it's
-short.
+Same as original `LICENSE.md` — source-available, non-commercial, credit required, no resale.

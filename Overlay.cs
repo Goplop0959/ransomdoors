@@ -8,6 +8,8 @@ namespace rans0m
     {
         private NotifyIcon? trayIcon;
         private System.Windows.Forms.Timer? topMostTimer;
+        private CancellationTokenSource? ransomCts;
+        private int _spawnGate = 0; // 0 idle, 1 running - ensures only 1 ransom at a time
 
         private static class NativeMethods
         {
@@ -20,7 +22,6 @@ namespace rans0m
             public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
         }
 
-        // ----------------------------- CONSTRUCTOR AND OVERLAY SETUP -----------------------------
         public Overlay() { InitializeComponent(); }
         protected override CreateParams CreateParams
         {
@@ -33,426 +34,683 @@ namespace rans0m
             }
         }
 
-
-
-
-
-
         // ----------------------------- RANSOM PHASES -----------------------------
 
-        /// <summary>
-        /// First phase of Ransom
-        /// </summary>
-        /// <returns>true if the mouse moved during the warning phase</returns>
         public async Task<bool> RansomWarning()
         {
-            WaveOut spawnSound = SoundHelper.Create(Properties.Resources.spawn);
-            spawnSound.Play();
-
-            // Shows Ransom's face randomly on the screen
-            Global.RandomPosControl(pc_ransom);
-            pc_ransom.Visible = true;
-
-            await Task.Delay(500);
-            // Mouse spy phase
-            Global.lastRegisteredMousePos = MousePosition;
-            Global.spyingMouse = true;
-
-            // Hide Ransom's face and show the warning sign
-            pc_stopsign.Visible = true;
-            pc_ransom.Visible = false;
-
-            await Task.Delay(500);
-            // End of spy phase
-
-            Global.spyingMouse = false;
-
-            // Hide the warning sign, show Ransom face's on the center with a red background
-            pc_stopsign.Visible = false;
-            pc_ransom.Visible = true;
-            Global.CenterControl(pc_ransom);
-            this.BackColor = Color.DarkRed;
-
-            await Task.Delay(100);
-
-            this.BackColor = this.TransparencyKey;
-            pc_ransom.Visible = false;
-
-            return MousePosition != Global.lastRegisteredMousePos; // Returns true if the mouse moved during the spy phase
-        }
-
-        /// <summary>
-        /// Second phase of Ransom, Jumpscare+Downloading effect
-        /// </summary>
-        public async Task DownloadJumpscare()
-        {
-            WaveOut attackSound = SoundHelper.Create(Properties.Resources.attack);
-            attackSound.Play();
-
-            Global.CenterControl(pc_attack);
-            Point attack_center = pc_attack.Location; // Store the center position of the attack image for the shake effect
-            pc_attack.Visible = true;
-            this.BackColor = Color.DarkRed;
-
-            // Ransom Face Shake Effect
-            new Thread(async () =>
+            bool result = false;
+            WaveOut? spawnSound = null;
+            try
             {
-                for (int i = 0; i <= 25; i++)
-                {
-                    await Task.Delay(20);
-                    try { this.Invoke(() => pc_attack.Location = new Point(attack_center.X + Global.rng.Next(-40, 40), attack_center.Y + Global.rng.Next(-40, 40))); }
-                    catch { break; }
-                }
-            }) { IsBackground = true }.Start();
+                FileLogger.Log("[RansomWarning] start");
+                try { spawnSound = SoundHelper.Create(Properties.Resources.spawn); spawnSound.Play(); FileLogger.Log("[RansomWarning] spawn sound played"); } catch (Exception ex) { FileLogger.Log($"[RansomWarning] spawn sound fail: {ex.Message}"); }
 
-            await Task.Delay(800);
+                try { Global.RandomPosControl(pc_ransom); pc_ransom.Visible = true; FileLogger.Log($"[RansomWarning] face shown at {pc_ransom.Location}"); } catch (Exception ex) { FileLogger.Log($"[RansomWarning] face show fail: {ex.Message}"); }
 
-            // Downloading screen
-            pc_ransom.Visible = false;
-            pc_attack.Visible = false;
+                await Task.Delay(500);
+                try { Global.lastRegisteredMousePos = MousePosition; Global.spyingMouse = true; FileLogger.Log($"[RansomWarning] spy start at {Global.lastRegisteredMousePos}"); } catch (Exception ex) { FileLogger.Log($"[RansomWarning] spy start fail: {ex.Message}"); }
 
-            WaveOut installSound = SoundHelper.Create(Properties.Resources.install);
-            installSound.Play();
+                try { pc_stopsign.Visible = true; pc_ransom.Visible = false; FileLogger.Log("[RansomWarning] stop sign shown"); } catch (Exception ex) { FileLogger.Log($"[RansomWarning] stop show fail: {ex.Message}"); }
 
-            // Background signs effect
-            new Thread(async () =>
-            {
-                List<PictureBox> list = new();
+                await Task.Delay(500);
+
+                try { Global.spyingMouse = false; FileLogger.Log("[RansomWarning] spy end"); } catch { }
+
+                try { pc_stopsign.Visible = false; pc_ransom.Visible = true; Global.CenterControl(pc_ransom); this.BackColor = Color.DarkRed; FileLogger.Log($"[RansomWarning] face centered at {pc_ransom.Location} red"); } catch (Exception ex) { FileLogger.Log($"[RansomWarning] face centered fail: {ex.Message}"); }
+
+                await Task.Delay(100);
+
                 try
                 {
-                    for (int i = 0; i <= 70; i++)
+                    if (!IsDisposed)
                     {
-                        await Task.Delay(10);
-                        this.Invoke(() =>
-                        {
-                            PictureBox stopsigndup = new PictureBox();
-                            stopsigndup.Image = Properties.Resources.stop_sign;
-                            stopsigndup.Size = new Size(192, 192);
-                            Global.RandomPosControl(stopsigndup);
-                            stopsigndup.SizeMode = PictureBoxSizeMode.StretchImage;
+                        this.BackColor = this.TransparencyKey;
+                        pc_ransom.Visible = false;
+                        FileLogger.Log("[RansomWarning] face hidden, bg transparent");
+                    }
+                }
+                catch (Exception ex) { FileLogger.Log($"[RansomWarning] hide fail: {ex.Message}"); }
 
-                            this.Controls.Add(stopsigndup);
-                            list.Add(stopsigndup);
-                        });
+                try
+                {
+                    var cur = MousePosition;
+                    // Require at least 1cm movement (~38px at 96 DPI) to trigger - not just 1px jitter
+                    // Use 40px threshold (~1.06cm) to avoid hypersensitivity
+                    int dx = cur.X - Global.lastRegisteredMousePos.X;
+                    int dy = cur.Y - Global.lastRegisteredMousePos.Y;
+                    double dist = Math.Sqrt(dx * dx + dy * dy);
+                    // If last was (-1,-1) from key press, always trigger (dist huge)
+                    result = dist > 40;
+                    FileLogger.Log($"[RansomWarning] last={Global.lastRegisteredMousePos} cur={cur} dist={dist:F1}px moved={result} (threshold 40px ~1cm)");
+                }
+                catch (Exception ex) { FileLogger.Log($"[RansomWarning] moved check fail: {ex.Message}"); result = false; }
+            }
+            catch (Exception ex)
+            {
+                FileLogger.Log($"[RansomWarning] exception: {ex.Message} {ex.StackTrace}");
+                try { Global.spyingMouse = false; } catch { }
+                try
+                {
+                    if (!IsDisposed)
+                    {
+                        pc_stopsign.Visible = false;
+                        pc_ransom.Visible = false;
+                        pc_attack.Visible = false;
+                        this.BackColor = this.TransparencyKey;
+                        this.Opacity = 1.0;
                     }
                 }
                 catch { }
-
-                // Clear the background signs
-                foreach (PictureBox item in list)
-                {
-                    try { this.Invoke(() => item.Dispose()); }
-                    catch { break; }
-                }
-            }) { IsBackground = true }.Start();
-
-            Global.CenterControl(txt_download);
-            Global.CenterControl(pb_download);
-            pb_download.Location = new Point(pb_download.Location.X, pb_download.Location.Y+50); // Add a lil offset
-
-            txt_download.Visible = true;
-            pb_download.Visible = true;
-            pb_download.Value = 100;
-
-            // Text and download bar shake/glitch effect
-            new Thread(() =>
+                result = false;
+            }
+            finally
             {
-                for (int i = 0; i <= 40; i++)
-                {
-                    Thread.Sleep(40);
-                    try
-                    {
-                        this.Invoke(() =>
-                        {
-                            txt_download.Font = new Font(txt_download.Font.FontFamily, txt_download.Font.Size + Global.rng.Next(-2, 3));
-                            txt_download.Location = new Point(txt_download.Location.X + Global.rng.Next(-5, 5), txt_download.Location.Y + Global.rng.Next(-5, 5));
-                            pb_download.Location = new Point(pb_download.Location.X + Global.rng.Next(-5, 5), pb_download.Location.Y + Global.rng.Next(-5, 5));
-                        });
-                    }
-                    catch { break; }
-                }
-            }) { IsBackground = true }.Start();
-
-            await Task.Delay(1200);
-
-            pc_ransom.Visible = false;
-            pc_attack.Visible = false;
-            txt_download.Visible = false;
-            pb_download.Visible = false;
-            pb_download.Value = 0;
+                try { spawnSound?.Dispose(); } catch { }
+            }
+            return result;
         }
 
-        /// <summary>
-        /// Third phase of Ransom, the actual ransom, plays the music, shows the Ransomed window, etc...
-        /// </summary>
+        public async Task DownloadJumpscare()
+        {
+            try
+            {
+                WaveOut? attackSound = null;
+                try { attackSound = SoundHelper.Create(Properties.Resources.attack); attackSound.Play(); } catch { }
+
+                if (IsDisposed) return;
+                try { Global.CenterControl(pc_attack); } catch { }
+                Point attack_center = pc_attack.Location;
+                try { pc_attack.Visible = true; this.BackColor = Color.DarkRed; } catch { }
+
+                // Shake effect
+                _ = Task.Run(async () =>
+                {
+                    for (int i = 0; i <= 25; i++)
+                    {
+                        await Task.Delay(20);
+                        if (IsDisposed || !IsHandleCreated) break;
+                        try { this.Invoke(() => { if (!IsDisposed) pc_attack.Location = new Point(attack_center.X + Global.RngNext(-40, 40), attack_center.Y + Global.RngNext(-40, 40)); }); }
+                        catch { break; }
+                    }
+                });
+
+                await Task.Delay(800);
+                if (IsDisposed) return;
+
+                try { pc_ransom.Visible = false; pc_attack.Visible = false; } catch { }
+
+                WaveOut? installSound = null;
+                try { installSound = SoundHelper.Create(Properties.Resources.install); installSound.Play(); } catch { }
+
+                // Background signs effect
+                _ = Task.Run(async () =>
+                {
+                    List<PictureBox> list = new();
+                    try
+                    {
+                        for (int i = 0; i <= 70; i++)
+                        {
+                            await Task.Delay(10);
+                            if (IsDisposed || !IsHandleCreated) break;
+                            try
+                            {
+                                this.Invoke(() =>
+                                {
+                                    if (IsDisposed) return;
+                                    PictureBox stopsigndup = new PictureBox();
+                                    stopsigndup.Image = Properties.Resources.stop_sign;
+                                    stopsigndup.Size = new Size(192, 192);
+                                    Global.RandomPosControl(stopsigndup);
+                                    stopsigndup.SizeMode = PictureBoxSizeMode.StretchImage;
+                                    this.Controls.Add(stopsigndup);
+                                    list.Add(stopsigndup);
+                                });
+                            }
+                            catch { break; }
+                        }
+                    }
+                    catch { }
+
+                    await Task.Delay(800);
+                    foreach (PictureBox item in list)
+                    {
+                        if (IsDisposed || !IsHandleCreated) break;
+                        try { this.Invoke(() => { try { this.Controls.Remove(item); item.Dispose(); } catch { } }); }
+                        catch { break; }
+                    }
+                });
+
+                if (IsDisposed) return;
+                try { Global.CenterControl(txt_download); Global.CenterControl(pb_download); pb_download.Location = new Point(pb_download.Location.X, pb_download.Location.Y + 50); } catch { }
+
+                try { txt_download.Visible = true; pb_download.Visible = true; pb_download.Value = 100; } catch { }
+
+                // Text shake
+                _ = Task.Run(async () =>
+                {
+                    var origFont = txt_download.Font;
+                    var origTxtLoc = txt_download.Location;
+                    var origPbLoc = pb_download.Location;
+                    for (int i = 0; i <= 40; i++)
+                    {
+                        await Task.Delay(40);
+                        if (IsDisposed || !IsHandleCreated) break;
+                        try
+                        {
+                            this.Invoke(() =>
+                            {
+                                if (IsDisposed) return;
+                                try
+                                {
+                                    var newSize = Math.Max(8, txt_download.Font.Size + Global.RngNext(-2, 3));
+                                    var old = txt_download.Font;
+                                    if (Math.Abs(newSize - old.Size) > 0.5)
+                                    {
+                                        var nf = new Font(old.FontFamily, newSize, old.Style);
+                                        txt_download.Font = nf;
+                                        if (old != origFont) try { old.Dispose(); } catch { }
+                                    }
+                                    txt_download.Location = new Point(origTxtLoc.X + Global.RngNext(-5, 5), origTxtLoc.Y + Global.RngNext(-5, 5));
+                                    pb_download.Location = new Point(origPbLoc.X + Global.RngNext(-5, 5), origPbLoc.Y + Global.RngNext(-5, 5));
+                                }
+                                catch { }
+                            });
+                        }
+                        catch { break; }
+                    }
+                });
+
+                await Task.Delay(1200);
+                if (IsDisposed) return;
+
+                try { pc_ransom.Visible = false; pc_attack.Visible = false; txt_download.Visible = false; pb_download.Visible = false; pb_download.Value = 0; } catch { }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[DownloadJumpscare] exception: {ex.Message}");
+                try
+                {
+                    if (!IsDisposed)
+                    {
+                        pc_ransom.Visible = false;
+                        pc_attack.Visible = false;
+                        txt_download.Visible = false;
+                        pb_download.Visible = false;
+                        try { pb_download.Value = 0; } catch { }
+                        this.BackColor = this.TransparencyKey;
+                    }
+                }
+                catch { }
+            }
+        }
+
         public async Task<bool> Ransomed()
         {
-            // Red Flash
             this.BackColor = Color.Red;
-            new Thread(async () =>
+            _ = Task.Run(async () =>
             {
                 try
                 {
                     for (int i = 0; i <= 50; i++)
                     {
                         await Task.Delay(1);
-                        this.Invoke(() => this.Opacity = 1 - (i * 2 / 100.0) );
+                        if (IsDisposed || !IsHandleCreated) break;
+                        try { this.Invoke(() => { if (!IsDisposed) this.Opacity = 1 - (i * 2 / 100.0); }); } catch { break; }
                     }
-                    this.Invoke(() =>
+                    if (!IsDisposed && IsHandleCreated)
                     {
-                        this.BackColor = this.TransparencyKey;
-                        this.Opacity = 100;
-                    });
+                        this.Invoke(() =>
+                        {
+                            if (!IsDisposed)
+                            {
+                                this.BackColor = this.TransparencyKey;
+                                this.Opacity = 1.0;
+                            }
+                        });
+                    }
                 }
                 catch { }
-            }) { IsBackground = true }.Start();
+            });
 
-            // OST
-            WaveOut layer1 = SoundHelper.Create(Properties.Resources.layer1);
-            WaveOut layer2 = SoundHelper.Create(Properties.Resources.layer2);
-            WaveOut layer3 = SoundHelper.Create(Properties.Resources.layer3);
+            WaveOut? layer1 = null, layer2 = null, layer3 = null;
+            try { layer1 = SoundHelper.Create(Properties.Resources.layer1); } catch { }
+            try { layer2 = SoundHelper.Create(Properties.Resources.layer2); } catch { }
+            try { layer3 = SoundHelper.Create(Properties.Resources.layer3); } catch { }
 
             Global.ransomLeft = 500;
             Global.underRansom = true;
-            Global.RansomPayed = () => // Ransom payed event
-            {
-                layer1.Stop();
-                layer2.Stop();
-                layer3.Stop();
+            ransomCts?.Cancel(); ransomCts?.Dispose();
+            ransomCts = new CancellationTokenSource();
+            var token = ransomCts.Token;
 
-                this.Invoke(ResetRansom);
+            Global.RansomPayed = () =>
+            {
+                try { token.ThrowIfCancellationRequested(); } catch { return; }
+                try
+                {
+                    layer1?.Stop(); layer2?.Stop(); layer3?.Stop();
+                    try { layer1?.Dispose(); } catch { }
+                    try { layer2?.Dispose(); } catch { }
+                    try { layer3?.Dispose(); } catch { }
+                }
+                catch { }
+                if (IsDisposed || !IsHandleCreated) return;
+                try { this.Invoke((MethodInvoker)ResetRansom); } catch { try { ResetRansom(); } catch { } }
             };
 
-            // Random flashing Ransom faces
-            new Thread(async () =>
+            // Random flashing faces
+            _ = Task.Run(async () =>
             {
-                while (Global.underRansom)
+                while (Global.underRansom && !token.IsCancellationRequested)
                 {
-                    await Task.Delay(Global.rng.Next(5000));
+                    try { await Task.Delay(Global.RngNext(2000, 5000), token); } catch { break; }
+                    if (IsDisposed || !IsHandleCreated || token.IsCancellationRequested) break;
                     try
                     {
                         this.Invoke((MethodInvoker)async delegate
                         {
-                            for (int i = 0; i <= Global.rng.Next(1, 5); i++)
+                            if (IsDisposed || token.IsCancellationRequested) return;
+                            for (int i = 0; i <= Global.RngNext(1, 4); i++)
                             {
+                                if (IsDisposed) break;
                                 PictureBox ransomFace = new PictureBox();
                                 ransomFace.Image = Properties.Resources.ransom_random;
-                                int size = Global.rng.Next(50, 400);
+                                int size = Global.RngNext(50, 400);
                                 ransomFace.Size = new Size(size, size);
-
                                 Global.RandomPosControl(ransomFace);
                                 ransomFace.SizeMode = PictureBoxSizeMode.StretchImage;
-
                                 this.Controls.Add(ransomFace);
                                 await Task.Delay(25);
-                                this.Controls.Remove(ransomFace);
+                                try { this.Controls.Remove(ransomFace); ransomFace.Dispose(); } catch { }
                             }
                         });
                     }
                     catch { break; }
                 }
-            }) { IsBackground = true }.Start();
+            }, token);
 
-            // Shows the main ransom window
-            Ransomed ransomedForm = new Ransomed();
-            ransomedForm.Show();
+            Ransomed? ransomedForm = null;
+            try
+            {
+                ransomedForm = new Ransomed();
+                ransomedForm.Show();
+            }
+            catch (Exception ex) { Debug.WriteLine($"[Ransomed] form show failed: {ex.Message}"); }
 
-            layer1.Play();
-            await Task.Delay(26000);
-            if (!Global.underRansom) return false;
+            try { layer1?.Play(); } catch { }
+            try { await Task.Delay(26000, token); } catch { }
+            if (!Global.underRansom || token.IsCancellationRequested) { try { layer1?.Dispose(); layer2?.Dispose(); layer3?.Dispose(); } catch { } return false; }
 
-            layer2.Play();
-            await Task.Delay(26000);
-            if (!Global.underRansom) return false;
+            try { layer2?.Play(); } catch { }
+            try { await Task.Delay(26000, token); } catch { }
+            if (!Global.underRansom || token.IsCancellationRequested) { try { layer1?.Dispose(); layer2?.Dispose(); layer3?.Dispose(); } catch { } return false; }
 
-            layer3.Play();
-            await Task.Delay(26000);
-            if (!Global.underRansom) return false;
+            try { layer3?.Play(); } catch { }
+            try { await Task.Delay(26000, token); } catch { }
+            if (!Global.underRansom || token.IsCancellationRequested) { try { layer1?.Dispose(); layer2?.Dispose(); layer3?.Dispose(); } catch { } return false; }
 
-            // If the code reaches here, this means the user didn't pay the ransom in time 
-            ransomedForm.Close();
+            try { ransomedForm?.Close(); ransomedForm?.Dispose(); } catch { }
+            try { layer1?.Dispose(); layer2?.Dispose(); layer3?.Dispose(); } catch { }
             return true;
         }
 
-        /// <summary>
-        /// Shows the jumpscare and crashes/shutdowns the computer depending if it's started as admin or not
-        /// </summary>
-        public async Task CrashJumpscare()
+        public async Task LoseGame()
         {
-            WaveOut attackSound = SoundHelper.Create(Properties.Resources.attack);
-            attackSound.Play();
+            WaveOut? attackSound = null;
+            try { attackSound = SoundHelper.Create(Properties.Resources.attack); attackSound.Play(); } catch { }
 
-            this.BackColor = Color.DarkRed;
-            Global.CenterControl(pc_attack);
-            Point attack_center = pc_attack.Location; // Store the center position of the attack image for the shake effect
-            pc_attack.Visible = true;
-            // Shake effect
-            new Thread(async () =>
+            if (!IsDisposed)
             {
-                for (int i = 0; i <= 25; i++)
+                this.BackColor = Color.DarkRed;
+                try { Global.CenterControl(pc_attack); } catch { }
+                Point attack_center = pc_attack.Location;
+                try { pc_attack.Visible = true; } catch { }
+                _ = Task.Run(async () =>
                 {
-                    await Task.Delay(10);
-                    try { this.Invoke(() => pc_attack.Location = new Point(attack_center.X + Global.rng.Next(-40, 40), attack_center.Y + Global.rng.Next(-40, 40))); }
-                    catch { break; }
-                }
-            }) { IsBackground = true }.Start();
+                    for (int i = 0; i <= 25; i++)
+                    {
+                        await Task.Delay(10);
+                        if (IsDisposed || !IsHandleCreated) break;
+                        try { this.Invoke(() => { if (!IsDisposed) pc_attack.Location = new Point(attack_center.X + Global.RngNext(-40, 40), attack_center.Y + Global.RngNext(-40, 40)); }); }
+                        catch { break; }
+                    }
+                });
+            }
 
             await Task.Delay(1000);
 
-            if (Global.IsAdministrator())
+            try { Global.OpenRickRoll(); } catch { }
+
+            if (!IsDisposed)
             {
-                // Basically morphs the process into a critical process, then kills it, causing a BSOD
-                Global.IntoCriticalProcess();
-                this.Close();
-            } 
-            else
-            {
-                // If not admin, just shutdown the computer
-                Process.Start("shutdown", "/s /t 0");
+                try
+                {
+                    foreach (Form f in Application.OpenForms.Cast<Form>().ToList())
+                    {
+                        if (f is Ransomed || f is TauntWindow)
+                        {
+                            try { f.Invoke(() => f.Close()); } catch { try { f.Close(); } catch { } }
+                        }
+                    }
+                }
+                catch { }
+
+                ResetRansom();
+                try { pc_attack.Visible = false; this.BackColor = this.TransparencyKey; this.Opacity = 1.0; } catch { }
             }
         }
 
-
-
-
-
-
-
+        public Task CrashJumpscare() => LoseGame();
 
         // ----------------------------- CORE -----------------------------
 
-        /// <summary>
-        /// Reset the app to it's ready state
-        /// </summary>
         public void ResetRansom()
         {
-            GoldCoinManager.DeleteAllCoins();
+            try { ransomCts?.Cancel(); } catch { }
+            try { GoldCoinManager.DeleteAllCoins(); } catch { }
+            // Restore desktop files/icons if ransomed - handles force-stop case and win case
+            try { DesktopRansomManager.TryRestore(); } catch { }
             Global.canAttack = true;
             Global.RansomPayed = null;
             Global.underRansom = false;
             Global.ransomLeft = 0;
+            try { KonamiCodeDetector.Reset(); } catch { }
 
-            txt_download.Font = new Font("Consolas", 36F, FontStyle.Bold, GraphicsUnit.Point, 0);
-            pc_ransom.Visible = false;
-            pc_attack.Visible = false;
-            txt_download.Visible = false;
-            pb_download.Visible = false;
-            pc_stopsign.Visible = false;
-            pb_download.Value = 0;
-
-            this.BackColor = this.TransparencyKey;
-        }
-
-        /// <summary>
-        /// Summons Ransom, triggers each step of the ransom process
-        /// </summary>
-        public async void SpawnRansom()
-        {
-            if (!Global.canAttack) return;
-            Global.canAttack = false;
-
-            bool mouseMoved = await RansomWarning();
-            if (mouseMoved) // User moved the mouse
+            try
             {
-                try { GoldCoinManager.CreateRandomCoins(8); }
-                catch { }
-
-                await DownloadJumpscare();
-
-                if (await Ransomed()) // If user didn't pay the ransom in time
+                var oldFont = txt_download.Font;
+                var newFont = new Font("Consolas", 36F, FontStyle.Bold, GraphicsUnit.Point, 0);
+                txt_download.Font = newFont;
+                if (oldFont != null && oldFont != newFont)
                 {
-                    Global.underRansom = false;
-                    await CrashJumpscare();
-                    this.Close();
+                    try { oldFont.Dispose(); } catch { }
                 }
             }
-            else ResetRansom(); // User didn't move the mouse, dodged the ransom
-        }
+            catch { }
 
-        /// <summary>
-        /// Ransom loop, keeps summoning ransom randomly
-        /// </summary>
-        private async void RansomLoop()
-        {
-            while (!this.IsDisposed)
+            if (!IsDisposed)
             {
-                try { this.Invoke(SpawnRansom); } // Invoke via the UI thread to avoid cross-thread exceptions (RansomLoop will be called only from another thread soooo)
-                catch { break; }
-
-                await Task.Delay(Global.rng.Next(Global.minRansomTime*1000, Global.maxRansomTime*1000)); // Ransom Debounce
+                try { pc_ransom.Visible = false; } catch { }
+                try { pc_attack.Visible = false; } catch { }
+                try { txt_download.Visible = false; } catch { }
+                try { pb_download.Visible = false; } catch { }
+                try { pc_stopsign.Visible = false; } catch { }
+                try { pb_download.Value = 0; } catch { }
+                try { this.BackColor = this.TransparencyKey; } catch { }
+                try { this.Opacity = 1.0; } catch { }
+                try
+                {
+                    var toRemove = this.Controls.OfType<PictureBox>().Where(p => p != pc_ransom && p != pc_attack && p != pc_stopsign).ToList();
+                    foreach (var pb in toRemove) { try { this.Controls.Remove(pb); pb.Dispose(); } catch { } }
+                }
+                catch { }
+                try { this.Invalidate(); this.Update(); } catch { }
             }
         }
 
-        /// <summary>
-        /// Setup the TrayIcon to close the app (cause there's no other way to close it)
-        /// </summary>
+        public async Task SpawnRansomAsync()
+        {
+            // Enforce single ransom at a time (atomic gate)
+            if (Interlocked.CompareExchange(ref _spawnGate, 1, 0) != 0)
+            {
+                FileLogger.Log("[Spawn] skip - already running");
+                return;
+            }
+            bool gateAcquired = true;
+            try
+            {
+                if (!Global.canAttack || Global.underRansom)
+                {
+                    FileLogger.Log($"[Spawn] skip - canAttack={Global.canAttack} underRansom={Global.underRansom}");
+                    return;
+                }
+                Global.canAttack = false;
+                FileLogger.Log("[Spawn] gate acquired, canAttack=false");
+
+                bool mouseMoved = false;
+                try
+                {
+                    mouseMoved = await RansomWarning();
+                }
+                catch (Exception ex)
+                {
+                    FileLogger.Log($"[Spawn] RansomWarning ex: {ex.Message}");
+                    mouseMoved = false;
+                }
+
+                if (IsDisposed)
+                {
+                    Global.canAttack = true;
+                    try { ResetRansom(); } catch { }
+                    return;
+                }
+
+            if (mouseMoved)
+            {
+                // Desktop file/icon ransom (attempt for each file)
+                try
+                {
+                    await Task.Run(() => DesktopRansomManager.TryRansomDesktop());
+                }
+                catch (Exception ex) { Debug.WriteLine($"[Spawn] DesktopRansom ex: {ex.Message}"); }
+
+                try { GoldCoinManager.CreateRandomCoins(8); } catch (Exception ex) { Debug.WriteLine($"[Spawn] GoldCoin ex: {ex.Message}"); }
+
+                try { await DownloadJumpscare(); } catch (Exception ex) { Debug.WriteLine($"[Spawn] DownloadJumpscare ex: {ex.Message}"); }
+
+                if (IsDisposed)
+                {
+                    Global.underRansom = false;
+                    try { ResetRansom(); } catch { }
+                    return;
+                }
+
+                bool failed = false;
+                try { failed = await Ransomed(); } catch (Exception ex) { Debug.WriteLine($"[Spawn] Ransomed ex: {ex.Message}"); failed = false; }
+
+                if (failed)
+                {
+                    Global.underRansom = false;
+                    try { await LoseGame(); } catch (Exception ex) { Debug.WriteLine($"[Spawn] LoseGame ex: {ex.Message}"); }
+                    // Do not auto-restore on loss to keep prank until win or next launch; but ensure tray still works
+                    Global.canAttack = true;
+                }
+                else
+                {
+                    // Win case already handled via RansomPayed -> ResetRansom which restores
+                    if (!Global.underRansom)
+                    {
+                        // Ensure canAttack true (Reset already)
+                        Global.canAttack = true;
+                    }
+                }
+            }
+            else
+            {
+                // Dodge success - ensure fully transparent, no leftover
+                try { ResetRansom(); } catch (Exception ex) { FileLogger.Log($"[Spawn] Reset ex: {ex.Message}"); try { this.BackColor = this.TransparencyKey; pc_ransom.Visible = false; Global.canAttack = true; } catch { } }
+            }
+            }
+            finally
+            {
+                if (gateAcquired) Interlocked.Exchange(ref _spawnGate, 0);
+                FileLogger.Log("[Spawn] gate released");
+            }
+        }
+
+        public async void SpawnRansom()
+        {
+            await SpawnRansomAsync();
+        }
+
+        private async void RansomLoop()
+        {
+            // Face hidden during idle - ensure initial delay before first attack
+            FileLogger.Log("[RansomLoop] Started, face hidden during idle");
+            try
+            {
+                if (IsHandleCreated && !IsDisposed)
+                {
+                    this.Invoke(new Action(() =>
+                    {
+                        try
+                        {
+                            pc_ransom.Visible = false;
+                            pc_stopsign.Visible = false;
+                            pc_attack.Visible = false;
+                            txt_download.Visible = false;
+                            pb_download.Visible = false;
+                            this.BackColor = this.TransparencyKey;
+                            this.Opacity = 1.0;
+                            FileLogger.Log("[RansomLoop] Initial hide done");
+                        }
+                        catch (Exception ex) { FileLogger.Log($"[RansomLoop] Initial hide ex: {ex.Message}"); }
+                    }));
+                }
+            }
+            catch { }
+
+            bool first = true;
+            while (!this.IsDisposed)
+            {
+                int delay;
+                if (first)
+                {
+                    delay = Global.RngNext(9*1000, 15*1000); // first ransom 9-15s per request
+                    first = false;
+                }
+                else delay = Global.RngNext(Global.minRansomTime*1000, Global.maxRansomTime*1000);
+                FileLogger.Log($"[RansomLoop] Next ransom in {delay/1000}s (face hidden) first={first}");
+                try { await Task.Delay(delay); } catch { break; }
+
+                if (IsDisposed) break;
+
+                // Ensure still hidden before spawn (spawn will show face as part of warning)
+                FileLogger.Log("[RansomLoop] Spawning ransom now");
+
+                try
+                {
+                    if (IsHandleCreated)
+                    {
+                        try
+                        {
+                            // Fire-and-forget like original: Invoke async void, do not block UI (avoid deadlock)
+                            this.Invoke(new Action(() => { _ = SpawnRansomAsync(); }));
+                        }
+                        catch (Exception ex) { FileLogger.Log($"[RansomLoop] Invoke ex: {ex.Message}"); _ = SpawnRansomAsync(); }
+                    }
+                    else _ = SpawnRansomAsync();
+                }
+                catch (Exception ex) { FileLogger.Log($"[RansomLoop] outer ex: {ex.Message}"); break; }
+
+                // After spawn, if dodge, face should be hidden again; if attack, underRansom true
+                // Loop will then delay again with face hidden (if not underRansom)
+                try
+                {
+                    if (!Global.underRansom && IsHandleCreated && !IsDisposed)
+                    {
+                        this.Invoke(new Action(() =>
+                        {
+                            try
+                            {
+                                if (pc_ransom.Visible || pc_stopsign.Visible || pc_attack.Visible)
+                                {
+                                    FileLogger.Log("[RansomLoop] Post-spawn fixing stray visible face");
+                                    pc_ransom.Visible = false;
+                                    pc_stopsign.Visible = false;
+                                    pc_attack.Visible = false;
+                                    txt_download.Visible = false;
+                                    pb_download.Visible = false;
+                                    this.BackColor = this.TransparencyKey;
+                                    this.Opacity = 1.0;
+                                }
+                            }
+                            catch { }
+                        }));
+                    }
+                }
+                catch { }
+            }
+        }
+
         private void SetupTrayIcon()
         {
             ContextMenuStrip trayMenu = new ContextMenuStrip();
-            trayMenu.Items.Add("Close").Click += (s, e) =>
+            var closeItem = trayMenu.Items.Add("Close");
+            closeItem.Click += (s, e) =>
             {
                 if (!Global.canAttack) return;
                 Close();
             };
+            var restoreItem = trayMenu.Items.Add("Restore Desktop (if ransomed)");
+            restoreItem.Click += (s, e) =>
+            {
+                try { DesktopRansomManager.TryRestore(); MessageBox.Show("Restore attempted. Check Desktop.", "RANS0M"); } catch { }
+            };
+            var hintItem = trayMenu.Items.Add("RANS0M - Konami+Shift = Win");
+            hintItem.Enabled = false;
 
             trayIcon = new NotifyIcon
             {
                 Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application,
                 ContextMenuStrip = trayMenu,
-                Text = "RANS0M",
+                Text = "RANS0M - Up Up Down Down Left Right Left Right B A Shift",
                 Visible = true
             };
 
             this.FormClosed += (s, e) =>
             {
-                trayIcon.Visible = false;
-                trayIcon.Dispose();
+                try { trayIcon.Visible = false; } catch { }
+                try { trayIcon.Dispose(); } catch { }
+                try { topMostTimer?.Stop(); topMostTimer?.Dispose(); } catch { }
+                try { ransomCts?.Cancel(); ransomCts?.Dispose(); } catch { }
             };
         }
 
-        // ----------------------------- EVENT HANDLERS -----------------------------
-
         private void Overlay_Load(object sender, EventArgs e)
         {
-            // Set the overlay to cover the entire screen
-            this.Bounds = SystemInformation.VirtualScreen; // Idk if ScreenBounds or this is better
+            this.Bounds = SystemInformation.VirtualScreen;
             this.Location = new Point(0, 0);
 
-            // Register .gold files and set the app to it's ready state
-            FileTypeRegister.RegisterIconForExtension(".gold", Properties.Resources.GoldIco, "GoldFile");
+            try { FileTypeRegister.RegisterIconForExtension(".gold", Properties.Resources.GoldIco, "GoldFile"); } catch { }
+            // Auto-restore if previous run was force-stopped
+            try { DesktopRansomManager.TryRestoreIfNeeded(); } catch { }
             ResetRansom();
             SetupTrayIcon();
             SetupTopMostTimer();
 
-            // Starts the RansomLoop (in a new thread to avoid blocking the UI thread)
-            new Thread(RansomLoop) { IsBackground = true }.Start();
+            _ = Task.Run(() => RansomLoop());
         }
 
-        /// <summary>
-        /// TopMost alone doesn't stick, other windows (especially elevated ones) can still cover the overlay,
-        /// so this keeps shoving it back to the front without stealing focus/keyboard input
-        /// </summary>
         private void SetupTopMostTimer()
         {
             topMostTimer = new System.Windows.Forms.Timer { Interval = 500 };
             topMostTimer.Tick += (s, e) =>
             {
-                if (IsDisposed) return;
-                NativeMethods.SetWindowPos(Handle, NativeMethods.HWND_TOPMOST, 0, 0, 0, 0,
-                    NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
+                if (IsDisposed || !IsHandleCreated) return;
+                // Don't cover Ransomed window - let it stay on top
+                try
+                {
+                    if (Application.OpenForms.OfType<Ransomed>().Any(f => f.Visible)) return;
+                    NativeMethods.SetWindowPos(Handle, NativeMethods.HWND_TOPMOST, 0, 0, 0, 0,
+                        NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
+                }
+                catch { }
             };
             topMostTimer.Start();
 
-            this.FormClosed += (s, e) => topMostTimer.Stop();
+            this.FormClosed += (s, e) => { try { topMostTimer.Stop(); } catch { } };
         }
 
         private void Overlay_FormClosing(object sender, FormClosingEventArgs e)
         {
-            if (Global.underRansom) // If the user is under ransom, prevent closing the overlay
+            if (Global.underRansom)
             {
                 e.Cancel = true;
                 return;
             }
+            try { GoldCoinManager.DeleteAllCoins(); } catch { }
+            // Don't delete restore json here; leave for next launch if ransomed
         }
     }
 }

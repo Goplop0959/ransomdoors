@@ -1,0 +1,39 @@
+# Build
+bin/
+obj/
+publish/
+publish_final/
+*.user
+*.suo
+.vs/
+
+# Logs and temp
+debug.log
+restore.json
+restore.json.tmp
+logs/
+browser-state*.json
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Standalone exe (use Releases for distribution)
+RansomDoors-Safe.exe
+Random_A-90.gif
+Random_A-90.ico
+Random_A-90.bmp
+*.pdb
+
+# But keep source
+!*.cs
+!*.csproj
+!*.slnx
+!*.resx
+!*.wav
+!*.mp3
+!*.png
+!*.jpg
+!*.jpeg
+!*.ico
