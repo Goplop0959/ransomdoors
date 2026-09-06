@@ -28,7 +28,8 @@ namespace rans0m
             // Unpack embedded assets to the created %TEMP%\Ransom_A-90 folder
             try { AssetManager.EnsureAssets(); } catch { }
             // Warm everything in the background so the first ransom has no hitches:
-            // audio bytes decoded, wallpaper frames pre-extracted at native res.
+            // audio bytes decoded, wallpaper frames pre-extracted at native res,
+            // chaos FX cels (corners + static) pre-rendered.
             _ = Task.Run(() =>
             {
                 try
@@ -44,6 +45,14 @@ namespace rans0m
                 }
                 catch { }
                 try { WallpaperAnimator.Prepare(); } catch { }
+                try { ChaosFx.Prewarm(); } catch { }
+                try
+                {
+                    foreach (var v in GoldCoinManager.CoinValues)
+                    { try { CoinOverlay.CoinImage(v, false); } catch { } }
+                    try { CoinOverlay.CoinImage(0, true); } catch { }
+                }
+                catch { }
             });
             // Auto-restore if previous run was force-stopped and left restore.json (file ops revert, icons, wallpaper)
             try { DesktopRansomManager.TryRestoreIfNeeded(); } catch (Exception ex) { Debug.WriteLine($"[Program] RestoreIfNeeded fail: {ex.Message}"); }

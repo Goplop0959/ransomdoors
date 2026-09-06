@@ -5,40 +5,6 @@ using System.Runtime.InteropServices;
 namespace rans0m
 {
     /// <summary>
-    /// Gif metadata helper: total play-once duration of an animated gif.
-    /// </summary>
-    public static class GifInfo
-    {
-        public static int TotalDurationMs(string path, int minMs = 400, int maxMs = 8000)
-        {
-            try
-            {
-                using var img = Image.FromFile(path);
-                int n;
-                try { n = img.GetFrameCount(FrameDimension.Time); }
-                catch { n = 1; }
-                n = Math.Clamp(n, 1, 120);
-                int total = 0;
-                try
-                {
-                    var prop = img.GetPropertyItem(0x5100); // PropertyTagFrameDelay
-                    byte[] raw = prop?.Value ?? Array.Empty<byte>();
-                    for (int i = 0; i < n; i++)
-                    {
-                        int cs = 10; // 100ms default
-                        if ((i + 1) * 4 <= raw.Length)
-                            cs = Math.Max(2, BitConverter.ToInt32(raw, i * 4));
-                        total += Math.Clamp(cs * 10, 80, 1000);
-                    }
-                }
-                catch { total = n * 120; }
-                return Math.Clamp(total, minMs, maxMs);
-            }
-            catch { return 1000; }
-        }
-    }
-
-    /// <summary>
     /// Fullscreen click-through chaos layer, ported from the Python reference
     /// sim (ransom border frame + red static noise):
     ///  - 4 animated red pixel-dot corner clouds (4 pre-rendered cels each,
@@ -219,6 +185,12 @@ namespace rans0m
                 for (int f = 0; f < 4; f++) noise[f] = RenderNoiseFrame(nw, nh);
                 _noiseFrames = noise;
             }
+        }
+
+        /// <summary>Pre-render all cels on a background thread so first Show is instant.</summary>
+        public static void Prewarm()
+        {
+            try { EnsurePrepared(); } catch { }
         }
 
         /// <summary>Show the fullscreen FX layer. UI thread only. Idempotent.</summary>

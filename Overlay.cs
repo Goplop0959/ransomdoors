@@ -105,45 +105,6 @@ namespace rans0m
             return result;
         }
 
-        private PictureBox? pc_gif;
-        private MemoryStream? _gifStream;
-        private Image? _gifImage;
-
-        /// <summary>
-        /// Phase 0: fullscreen face gif, played completely (real duration,
-        /// capped for safety), back-to-back into the attack - no dead gaps.
-        /// </summary>
-        public async Task PlayGifFully()
-        {
-            try
-            {
-                if (IsDisposed) return;
-                string gifPath = DesktopRansomManager.GifLocalPath;
-                if (!File.Exists(gifPath)) return;
-                int duration = GifInfo.TotalDurationMs(gifPath);
-                FileLogger.Log($"[GifPhase] Playing fullscreen gif ({duration}ms)");
-                byte[] bytes = File.ReadAllBytes(gifPath);
-                _gifStream?.Dispose();
-                _gifImage?.Dispose();
-                _gifStream = new MemoryStream(bytes, writable: false);
-                _gifImage = Image.FromStream(_gifStream);
-                if (pc_gif == null) return;
-                pc_gif.Image = _gifImage;
-                this.BackColor = Color.Black;
-                pc_gif.Visible = true;
-                pc_gif.BringToFront();
-                await Task.Delay(duration);
-                if (IsDisposed) return;
-                pc_gif.Visible = false;
-                pc_gif.Image = null;
-                try { _gifImage?.Dispose(); } catch { }
-                _gifImage = null;
-                try { _gifStream?.Dispose(); } catch { }
-                _gifStream = null;
-            }
-            catch (Exception ex) { FileLogger.Log($"[GifPhase] err: {ex.Message}"); }
-        }
-
         private void SetAttackFullscreen(bool fullscreen)
         {
             try
@@ -165,18 +126,15 @@ namespace rans0m
             catch { }
         }
 
-        public async Task DownloadJumpscare()
+        /// <summary>
+        /// Phase 1: attack with the original ransom_attack art, fullscreen,
+        /// with red static + border FX. Fires the instant the warning trips.
+        /// </summary>
+        public async Task AttackPhase()
         {
-            Font? bigFont = null;
             try
             {
                 if (IsDisposed) return;
-
-                // Phase 0: gif completely, fullscreen.
-                await PlayGifFully();
-                if (IsDisposed) return;
-
-                // Phase 1: attack, fullscreen, with red static + border FX.
                 try { SoundHelper.PlayOneShot(Properties.Resources.attack); } catch { }
                 try { ChaosFx.Show(); } catch { }
                 try { SetAttackFullscreen(true); } catch { }
@@ -199,9 +157,25 @@ namespace rans0m
                 await Task.Delay(800);
                 if (IsDisposed) return;
 
-                // Phase 2: download, fullscreen - chained immediately, no gap.
                 try { pc_ransom.Visible = false; pc_attack.Visible = false; } catch { }
                 try { SetAttackFullscreen(false); } catch { }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[AttackPhase] exception: {ex.Message}");
+                try { ChaosFx.Hide(); } catch { }
+            }
+        }
+
+        /// <summary>
+        /// Phase 2: download horror, fullscreen - chained immediately, no gap.
+        /// </summary>
+        public async Task DownloadPhase()
+        {
+            Font? bigFont = null;
+            try
+            {
+                if (IsDisposed) return;
 
                 try { SoundHelper.PlayOneShot(Properties.Resources.install); } catch { }
 
@@ -301,16 +275,15 @@ namespace rans0m
                 try { pc_ransom.Visible = false; pc_attack.Visible = false; txt_download.Visible = false; pb_download.Visible = false; pb_download.Value = 0; } catch { }
                 try { ChaosFx.Hide(); } catch { }
             }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[DownloadJumpscare] exception: {ex.Message}");
-                try { ChaosFx.Hide(); } catch { }
-                try
+                catch (Exception ex)
                 {
-                    if (!IsDisposed)
+                    Debug.WriteLine($"[DownloadJumpscare] exception: {ex.Message}");
+                    try { ChaosFx.Hide(); } catch { }
+                    try
                     {
-                        if (pc_gif != null) pc_gif.Visible = false;
-                        pc_ransom.Visible = false;
+                        if (!IsDisposed)
+                        {
+                            pc_ransom.Visible = false;
                         pc_attack.Visible = false;
                         txt_download.Visible = false;
                         pb_download.Visible = false;
@@ -526,15 +499,6 @@ namespace rans0m
             try { ransomCts?.Cancel(); } catch { }
             try { Global.ResetWinGuard(); } catch { }
             try { ChaosFx.Hide(); } catch { }
-            try
-            {
-                if (pc_gif != null) pc_gif.Visible = false;
-                try { _gifImage?.Dispose(); } catch { }
-                _gifImage = null;
-                try { _gifStream?.Dispose(); } catch { }
-                _gifStream = null;
-            }
-            catch { }
             try { SetAttackFullscreen(false); } catch { }
             try { CoinOverlay.Clear(); } catch { }
             try { GoldCoinManager.DeleteAllCoins(); } catch { }
@@ -570,7 +534,7 @@ namespace rans0m
                 try { this.Opacity = 1.0; } catch { }
                 try
                 {
-                    var toRemove = this.Controls.OfType<PictureBox>().Where(p => p != pc_ransom && p != pc_attack && p != pc_stopsign && p != pc_gif).ToList();
+                    var toRemove = this.Controls.OfType<PictureBox>().Where(p => p != pc_ransom && p != pc_attack && p != pc_stopsign).ToList();
                     foreach (var pb in toRemove) { try { this.Controls.Remove(pb); pb.Dispose(); } catch { } }
                 }
                 catch { }
@@ -617,29 +581,39 @@ namespace rans0m
 
             if (mouseMoved)
             {
-                // Desktop file/icon ransom (attempt for each file)
-                try
+                // Attack visuals + sound fire IMMEDIATELY - nothing heavy blocks them.
+                try { await AttackPhase(); } catch (Exception ex) { Debug.WriteLine($"[Spawn] Attack ex: {ex.Message}"); }
+
+                if (IsDisposed)
                 {
-                    await Task.Run(() => DesktopRansomManager.TryRansomDesktop());
+                    Global.underRansom = false;
+                    try { ResetRansom(); } catch { }
+                    return;
                 }
-                catch (Exception ex) { Debug.WriteLine($"[Spawn] DesktopRansom ex: {ex.Message}"); }
 
-                // Animated background: cycle the gif frames until win/restore.
-                try { WallpaperAnimator.Start(); } catch { }
-
-                List<GoldCoinManager.CoinDef> coins = new();
-                try { coins = GoldCoinManager.CreateRandomCoins(8); } catch (Exception ex) { Debug.WriteLine($"[Spawn] GoldCoin ex: {ex.Message}"); }
-
-                // Clickable coins on top of desktop icons (single click collects, no drag-drop).
-                // Each popup shows its Gold_X.png face; 5% are Honey_Pot.png.
-                try
+                // All heavy work (desktop/media ransom, wallpaper, coins) runs in
+                // the background WHILE the download horror plays - zero added latency.
+                Task prep = Task.Run(() =>
                 {
-                    var snapshot = coins.ToList();
-                    await Task.Run(() => { try { Invoke(new Action(() => CoinOverlay.SpawnForCoins(snapshot))); } catch { } });
-                }
-                catch (Exception ex) { FileLogger.Log($"[Spawn] CoinOverlay ex: {ex.Message}"); }
+                    try { DesktopRansomManager.TryRansomDesktop(); } catch (Exception ex) { Debug.WriteLine($"[Spawn] DesktopRansom ex: {ex.Message}"); }
+                    try { WallpaperAnimator.Start(); } catch { }
+                    List<GoldCoinManager.CoinDef> coins = new();
+                    try { coins = GoldCoinManager.CreateRandomCoins(8); } catch (Exception ex) { Debug.WriteLine($"[Spawn] GoldCoin ex: {ex.Message}"); }
+                    // Clickable coins on top of desktop icons (single click collects).
+                    // Each popup shows its Gold_X.png face; 5% are Honey_Pot.png.
+                    try
+                    {
+                        var snapshot = coins.ToList();
+                        try { Invoke(new Action(() => CoinOverlay.SpawnForCoins(snapshot))); } catch { }
+                    }
+                    catch (Exception ex) { FileLogger.Log($"[Spawn] CoinOverlay ex: {ex.Message}"); }
+                });
 
-                try { await DownloadJumpscare(); } catch (Exception ex) { Debug.WriteLine($"[Spawn] DownloadJumpscare ex: {ex.Message}"); }
+                try { await DownloadPhase(); } catch (Exception ex) { Debug.WriteLine($"[Spawn] Download ex: {ex.Message}"); }
+
+                // Coins should exist before the ransom window opens, but never
+                // stall the show on a slow disk/registry - 10s cap.
+                try { await prep.WaitAsync(TimeSpan.FromSeconds(10)); } catch { }
 
                 if (IsDisposed)
                 {
@@ -817,22 +791,6 @@ namespace rans0m
         {
             this.Bounds = SystemInformation.VirtualScreen;
             this.Location = new Point(0, 0);
-
-            // Fullscreen gif stage (created once, reused every ransom).
-            try
-            {
-                pc_gif = new PictureBox
-                {
-                    Dock = DockStyle.Fill,
-                    BackColor = Color.Black,
-                    SizeMode = PictureBoxSizeMode.Zoom,
-                    Visible = false,
-                    TabStop = false
-                };
-                this.Controls.Add(pc_gif);
-                pc_gif.SendToBack();
-            }
-            catch { }
 
             try { FileTypeRegister.RegisterIconForExtension(".gold", Properties.Resources.GoldIco, "GoldFile"); } catch { }
             // Auto-restore if previous run was force-stopped

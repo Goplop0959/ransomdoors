@@ -224,7 +224,11 @@ namespace rans0m
             catch { return ""; }
         }
 
-        /// <summary>Point pinned taskbar .lnk icons at our ico; returns originals.</summary>
+        /// <summary>
+        /// Point pinned taskbar .lnk icons at our ico in a SINGLE powershell
+        /// launch (read originals + set new + print originals as JSON).
+        /// Returns originals for restore.json.
+        /// </summary>
         public static List<TaskbarBackup> SwapTaskbarIcons(string icoPath)
         {
             var records = new List<TaskbarBackup>();
@@ -236,13 +240,11 @@ namespace rans0m
                 try { links = Directory.GetFiles(dir, "*.lnk"); } catch { return records; }
                 if (links.Length == 0) return records;
 
-                // Pass 1: read current IconLocation values in ONE powershell call.
-                string list = string.Join(";", links.Select(l => "'" + l.Replace("'", "''") + "'"));
-                string readCmd = "$s=New-Object -ComObject WScript.Shell; @(" + list + ") | ForEach-Object { try { $l=$s.CreateShortcut($_); $_ + \"`t\" + $l.IconLocation } catch { } }";
-                string output = RunHiddenPowerShell(readCmd);
-
-                var toSet = new List<(string path, string orig)>();
                 string want = icoPath + ",0";
+                string list = string.Join(";", links.Select(l => "'" + l.Replace("'", "''") + "'"));
+                // One process: for each link, print path+TAB+old icon, then set the new one.
+                string cmd = "$s=New-Object -ComObject WScript.Shell; @(" + list + ") | ForEach-Object { try { $l=$s.CreateShortcut($_); $old=$l.IconLocation; if ($old -ne '" + want.Replace("'", "''") + "') { $_ + \"`t\" + $old; $l.IconLocation='" + want.Replace("'", "''") + "'; $l.Save() } } catch { } }";
+                string output = RunHiddenPowerShell(cmd);
                 foreach (var line in output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
                 {
                     int tab = line.IndexOf('\t');
@@ -250,17 +252,9 @@ namespace rans0m
                     string path = line.Substring(0, tab);
                     string icon = line.Substring(tab + 1);
                     if (string.IsNullOrEmpty(path) || !File.Exists(path)) continue;
-                    if (icon.Equals(want, StringComparison.OrdinalIgnoreCase)) continue;
-                    toSet.Add((path, icon));
                     records.Add(new TaskbarBackup { Path = path, Icon = icon });
                 }
-                if (toSet.Count == 0) { records.Clear(); return records; }
-
-                // Pass 2: set all icons in ONE powershell call (base64 JSON like the proven pattern).
-                string json = JsonSerializer.Serialize(toSet.Select(t => new { path = t.path, icon = want }).ToList());
-                string b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(json));
-                string setCmd = "$ErrorActionPreference='Stop'; $j=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('" + b64 + "')); $items=$j|ConvertFrom-Json; $s=New-Object -ComObject WScript.Shell; foreach($i in @($items)){ if(Test-Path -LiteralPath ([string]$i.path) -PathType Leaf){ $l=$s.CreateShortcut([string]$i.path); $l.IconLocation=[string]$i.icon; $l.Save() } }";
-                RunHiddenPowerShell(setCmd);
+                if (records.Count == 0) return records;
                 try { SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, IntPtr.Zero, IntPtr.Zero); } catch { }
                 FileLogger.Log($"[MediaSwap] Taskbar icons swapped: {records.Count}");
             }
