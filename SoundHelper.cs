@@ -54,5 +54,48 @@ namespace rans0m
             if (waveOut == null) return;
             try { waveOut.Play(); } catch { try { waveOut.Dispose(); } catch { } }
         }
+
+        // Cache of decoded resource bytes -> raw stream bytes, so big WAV layers
+        // (layer1/2/3) aren't re-decoded from resources on every ransom.
+        private static readonly Dictionary<int, byte[]> _bytesCache = new();
+        private static readonly object _cacheLock = new();
+
+        private static byte[] SnapshotBytes(Stream s)
+        {
+            try { if (s.CanSeek) s.Position = 0; } catch { }
+            using var ms = new MemoryStream();
+            try { s.CopyTo(ms); } catch { }
+            try { if (s.CanSeek) s.Position = 0; } catch { }
+            return ms.ToArray();
+        }
+
+        /// <summary>
+        /// Fire-and-forget one-shot sfx. Does NOT dispose early (previous
+        /// `using var sfx` cut playback short) - disposal happens on
+        /// PlaybackStopped. Volume 0-1.
+        /// </summary>
+        public static void PlayOneShot(Stream resourceStream, float volume = 1.0f)
+        {
+            try
+            {
+                if (resourceStream == null) return;
+                int key;
+                byte[] bytes;
+                lock (_cacheLock)
+                {
+                    key = resourceStream.GetHashCode();
+                    if (!_bytesCache.TryGetValue(key, out bytes!))
+                    {
+                        bytes = SnapshotBytes(resourceStream);
+                        _bytesCache[key] = bytes;
+                    }
+                }
+                var ms = new MemoryStream(bytes, writable: false);
+                var w = Create(ms); // Create() disposes ms on PlaybackStopped
+                try { w.Volume = Math.Clamp(volume, 0f, 1f); } catch { }
+                try { w.Play(); } catch { try { w.Dispose(); } catch { } }
+            }
+            catch { }
+        }
     }
 }

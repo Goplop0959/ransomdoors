@@ -27,6 +27,22 @@
     <Content Include="main_ico.ico" />
   </ItemGroup>
 
+  <!-- Clickable coin faces + honey pot: loose files next to the single-file exe -->
+  <ItemGroup>
+    <Content Include="Gold_*.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="Honey_Pot.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="Random_A-90.gif">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+
   <ItemGroup>
     <None Include="..\stop_sign.png">
       <Pack>True</Pack>

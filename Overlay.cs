@@ -185,16 +185,18 @@ namespace rans0m
 
                 try { txt_download.Visible = true; pb_download.Visible = true; pb_download.Value = 100; } catch { }
 
-                // Text shake
+                // Text shake (position-only: creating a new Font 40x per ransom
+                // leaks GDI handles and stalls the UI thread - same glitch look)
                 _ = Task.Run(async () =>
                 {
-                    var origFont = txt_download.Font;
                     var origTxtLoc = txt_download.Location;
                     var origPbLoc = pb_download.Location;
-                    for (int i = 0; i <= 40; i++)
+                    for (int i = 0; i <= 30; i++)
                     {
                         await Task.Delay(40);
                         if (IsDisposed || !IsHandleCreated) break;
+                        int ox1 = Global.RngNext(-5, 5), oy1 = Global.RngNext(-5, 5);
+                        int ox2 = Global.RngNext(-5, 5), oy2 = Global.RngNext(-5, 5);
                         try
                         {
                             this.Invoke(() =>
@@ -202,22 +204,23 @@ namespace rans0m
                                 if (IsDisposed) return;
                                 try
                                 {
-                                    var newSize = Math.Max(8, txt_download.Font.Size + Global.RngNext(-2, 3));
-                                    var old = txt_download.Font;
-                                    if (Math.Abs(newSize - old.Size) > 0.5)
-                                    {
-                                        var nf = new Font(old.FontFamily, newSize, old.Style);
-                                        txt_download.Font = nf;
-                                        if (old != origFont) try { old.Dispose(); } catch { }
-                                    }
-                                    txt_download.Location = new Point(origTxtLoc.X + Global.RngNext(-5, 5), origTxtLoc.Y + Global.RngNext(-5, 5));
-                                    pb_download.Location = new Point(origPbLoc.X + Global.RngNext(-5, 5), origPbLoc.Y + Global.RngNext(-5, 5));
+                                    txt_download.Location = new Point(origTxtLoc.X + ox1, origTxtLoc.Y + oy1);
+                                    pb_download.Location = new Point(origPbLoc.X + ox2, origPbLoc.Y + oy2);
                                 }
                                 catch { }
                             });
                         }
                         catch { break; }
                     }
+                    // Restore exact positions once
+                    try
+                    {
+                        this.Invoke(() =>
+                        {
+                            try { txt_download.Location = origTxtLoc; pb_download.Location = origPbLoc; } catch { }
+                        });
+                    }
+                    catch { }
                 });
 
                 await Task.Delay(1200);
@@ -277,8 +280,18 @@ namespace rans0m
             try { layer2 = SoundHelper.Create(Properties.Resources.layer2); } catch { }
             try { layer3 = SoundHelper.Create(Properties.Resources.layer3); } catch { }
 
-            Global.ransomLeft = 500;
+            // Apply saved Honey_Pot overpay credit from the previous ransom
+            int credit = Interlocked.Exchange(ref Global.goldCredit, 0);
+            Global.ransomLeft = Math.Max(0, Global.RansomTarget - Math.Max(0, credit));
+            if (credit > 0) FileLogger.Log($"[Ransomed] Applied saved credit {credit}, starting at {Global.ransomLeft}");
             Global.underRansom = true;
+            if (Global.ransomLeft <= 0)
+            {
+                // Credit covered the whole requirement: instant thumbs-up win
+                FileLogger.Log("[Ransomed] Credit covers full ransom, instant win");
+                Global.WinRansom("credit");
+                return false;
+            }
             ransomCts?.Cancel(); ransomCts?.Dispose();
             ransomCts = new CancellationTokenSource();
             var token = ransomCts.Token;
@@ -298,34 +311,58 @@ namespace rans0m
                 try { this.Invoke((MethodInvoker)ResetRansom); } catch { try { ResetRansom(); } catch { } }
             };
 
-            // Random flashing faces
+            // Chaos loop: flashing faces + extra taunt popups while ransom is live.
+            // Optimized: no await inside the UI invoke (was blocking the message
+            // pump); faces are added in one Invoke and removed by a background task.
+            Image flashImg;
+            try { flashImg = Properties.Resources.ransom_random; } catch { flashImg = null!; }
             _ = Task.Run(async () =>
             {
                 while (Global.underRansom && !token.IsCancellationRequested)
                 {
-                    try { await Task.Delay(Global.RngNext(2000, 5000), token); } catch { break; }
+                    try { await Task.Delay(Global.RngNext(1200, 2500), token); } catch { break; }
                     if (IsDisposed || !IsHandleCreated || token.IsCancellationRequested) break;
+                    List<PictureBox> batch = new();
                     try
                     {
-                        this.Invoke((MethodInvoker)async delegate
+                        int n = Global.RngNext(2, 7); // 2-6 faces per burst (more GUIs)
+                        this.Invoke((MethodInvoker)delegate
                         {
                             if (IsDisposed || token.IsCancellationRequested) return;
-                            for (int i = 0; i <= Global.RngNext(1, 4); i++)
+                            for (int i = 0; i < n; i++)
                             {
                                 if (IsDisposed) break;
-                                PictureBox ransomFace = new PictureBox();
-                                ransomFace.Image = Properties.Resources.ransom_random;
-                                int size = Global.RngNext(50, 400);
-                                ransomFace.Size = new Size(size, size);
-                                Global.RandomPosControl(ransomFace);
-                                ransomFace.SizeMode = PictureBoxSizeMode.StretchImage;
-                                this.Controls.Add(ransomFace);
-                                await Task.Delay(25);
-                                try { this.Controls.Remove(ransomFace); ransomFace.Dispose(); } catch { }
+                                try
+                                {
+                                    var ransomFace = new PictureBox
+                                    {
+                                        Image = flashImg,
+                                        SizeMode = PictureBoxSizeMode.StretchImage
+                                    };
+                                    int size = Global.RngNext(60, 380);
+                                    ransomFace.Size = new Size(size, size);
+                                    Global.RandomPosControl(ransomFace);
+                                    this.Controls.Add(ransomFace);
+                                    batch.Add(ransomFace);
+                                }
+                                catch { }
                             }
                         });
                     }
                     catch { break; }
+                    if (batch.Count == 0) continue;
+                    try { await Task.Delay(220, token); } catch { }
+                    try
+                    {
+                        this.Invoke((MethodInvoker)delegate
+                        {
+                            foreach (var pb in batch)
+                            {
+                                try { this.Controls.Remove(pb); pb.Dispose(); } catch { }
+                            }
+                        });
+                    }
+                    catch { foreach (var pb in batch) { try { pb.Dispose(); } catch { } } }
                 }
             }, token);
 
@@ -407,6 +444,8 @@ namespace rans0m
         public void ResetRansom()
         {
             try { ransomCts?.Cancel(); } catch { }
+            try { Global.ResetWinGuard(); } catch { }
+            try { CoinOverlay.Clear(); } catch { }
             try { GoldCoinManager.DeleteAllCoins(); } catch { }
             // Restore desktop files/icons if ransomed - handles force-stop case and win case
             try { DesktopRansomManager.TryRestore(); } catch { }
@@ -494,7 +533,17 @@ namespace rans0m
                 }
                 catch (Exception ex) { Debug.WriteLine($"[Spawn] DesktopRansom ex: {ex.Message}"); }
 
-                try { GoldCoinManager.CreateRandomCoins(8); } catch (Exception ex) { Debug.WriteLine($"[Spawn] GoldCoin ex: {ex.Message}"); }
+                List<GoldCoinManager.CoinDef> coins = new();
+                try { coins = GoldCoinManager.CreateRandomCoins(8); } catch (Exception ex) { Debug.WriteLine($"[Spawn] GoldCoin ex: {ex.Message}"); }
+
+                // Clickable coins on top of desktop icons (single click collects, no drag-drop).
+                // Each popup shows its Gold_X.png face; 5% are Honey_Pot.png.
+                try
+                {
+                    var snapshot = coins.ToList();
+                    await Task.Run(() => { try { Invoke(new Action(() => CoinOverlay.SpawnForCoins(snapshot))); } catch { } });
+                }
+                catch (Exception ex) { FileLogger.Log($"[Spawn] CoinOverlay ex: {ex.Message}"); }
 
                 try { await DownloadJumpscare(); } catch (Exception ex) { Debug.WriteLine($"[Spawn] DownloadJumpscare ex: {ex.Message}"); }
 
@@ -688,10 +737,11 @@ namespace rans0m
             topMostTimer.Tick += (s, e) =>
             {
                 if (IsDisposed || !IsHandleCreated) return;
-                // Don't cover Ransomed window - let it stay on top
+                // Don't cover Ransomed / ThankYou windows - let them stay on top
                 try
                 {
                     if (Application.OpenForms.OfType<Ransomed>().Any(f => f.Visible)) return;
+                    if (Application.OpenForms.OfType<ThankYou>().Any(f => f.Visible)) return;
                     NativeMethods.SetWindowPos(Handle, NativeMethods.HWND_TOPMOST, 0, 0, 0, 0,
                         NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
                 }

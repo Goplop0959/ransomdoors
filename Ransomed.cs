@@ -24,24 +24,112 @@ namespace rans0m
         protected override void OnHandleCreated(EventArgs e)
         {
             base.OnHandleCreated(e);
-            try { DragDropFix.Allow(this.Handle); } catch { }
+            // Drag-and-drop retired: coins are click-only overlay popups now.
         }
+
+        private static int _popupIndex = 0;
 
         private void Ransomed_Load(object sender, EventArgs e)
         {
-            lbl_time.Text = $"TIME: {remainingTime / 60:D2}:{remainingTime % 60:D2}";
+            // Fix time-left not showing: force visible, front, repaint, and mirror in title
+            try
+            {
+                lbl_time.Visible = true;
+                lbl_time.Enabled = true;
+                lbl_time.BringToFront();
+                lbl_time.Text = $"TIME: {remainingTime / 60:D2}:{remainingTime % 60:D2}";
+                lbl_time.Refresh();
+                Text = $"RANS0M - {lbl_time.Text}";
+            }
+            catch { }
             txt_cashToPay.Text = Global.ransomLeft.ToString();
+            try { txt_cashToPay.Visible = true; txt_cashToPay.BringToFront(); } catch { }
             timer1.Start();
             Global.RandomPosControl(this);
             FileLogger.Log($"[Ransomed] Load at {Location} time {lbl_time.Text} cash {txt_cashToPay.Text}");
 
-            for (int i = 0; i < 6; i++)
+            // Single popup at a time, cycling to a different one when it closes
+            SpawnNextPopup();
+
+            // Click-to-collect: single click on gold icon collects one coin (no drag needed)
+            try
             {
-                try { var w = new TauntWindow(); w.Show(); } catch { }
+                pictureBox2.Cursor = Cursors.Hand;
+                pictureBox2.Click += (_, __) =>
+                {
+                    try
+                    {
+                        var r = GoldCoinManager.CollectAnyDesktopCoin();
+                        FileLogger.Log($"[Ransomed] Gold picture click collected {r.Value} honey={r.IsHoneyPot}, remaining {Global.ransomLeft}");
+                        if (r.Value <= 0)
+                        {
+                            // Still give feedback even if no file (e.g. already collected via overlay)
+                            txt_cashToPay.Text = Global.ransomLeft.ToString();
+                        }
+                        RefreshAfterCollect();
+                    }
+                    catch { }
+                };
             }
+            catch { }
 
             _ = Task.Run(() => Global.GlitchIdle(this, true));
             SetupTopMost();
+        }
+
+        private const int PopupTarget = 5; // keep 5 taunts on screen at once
+
+        private void SpawnNextPopup()
+        {
+            try
+            {
+                if (!Global.underRansom || IsDisposed) return;
+                int alive = Application.OpenForms.OfType<TauntWindow>().Count(f => !f.IsDisposed);
+                for (int i = alive; i < PopupTarget; i++)
+                {
+                    try
+                    {
+                        var w = new TauntWindow(_popupIndex++);
+                        w.FormClosed += (_, __) =>
+                        {
+                            try
+                            {
+                                if (Global.underRansom && !IsDisposed && IsHandleCreated)
+                                    BeginInvoke(new Action(SpawnNextPopup));
+                            }
+                            catch { }
+                        };
+                        w.Show();
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+        }
+
+        /// <summary>Called after a click-collect so time + cash repaint immediately.</summary>
+        public void RefreshAfterCollect()
+        {
+            try
+            {
+                if (IsDisposed) return;
+                txt_cashToPay.Text = Global.ransomLeft.ToString();
+                lbl_time.Text = $"TIME: {remainingTime / 60:D2}:{remainingTime % 60:D2}";
+                try { lbl_time.Refresh(); txt_cashToPay.Refresh(); } catch { }
+                Text = $"RANS0M - {lbl_time.Text} - {Global.ransomLeft} left";
+            }
+            catch { }
+            try { CheckWin(); } catch { }
+        }
+
+        private void CheckWin()
+        {
+            if (Global.ransomLeft <= 0 && Global.underRansom)
+            {
+                try { timer1.Stop(); } catch { }
+                Global.WinRansom("coins");
+                try { Dispose(); } catch { }
+            }
         }
 
         private void SetupTopMost()
@@ -68,6 +156,8 @@ namespace rans0m
             if (remainingTime < 0) remainingTime = 0;
             txt_cashToPay.Text = Global.ransomLeft.ToString();
             lbl_time.Text = $"TIME: {remainingTime / 60:D2}:{remainingTime % 60:D2}";
+            try { lbl_time.Visible = true; lbl_time.BringToFront(); lbl_time.Refresh(); } catch { }
+            try { Text = $"RANS0M - {lbl_time.Text} - {Global.ransomLeft} left"; } catch { }
 
             if (remainingTime <= 0)
             {
@@ -98,84 +188,17 @@ namespace rans0m
             // Also update cash even if ransomLeft changed externally (konami)
             if (Global.ransomLeft <= 0 && Global.underRansom)
             {
-                // Should have been handled by dragdrop but handle konami win
                 timer1.Stop();
-                Global.underRansom = false;
-                try { new ThankYou().Show(); } catch { }
+                Global.WinRansom("coins-external");
                 try { Dispose(); } catch { }
             }
         }
 
 
-        // ------------ EVENT HANDLERS ------------------------------------------
-        private void Ransomed_DragEnter(object sender, DragEventArgs e)
-        {
-            if (e.Data != null && e.Data.GetDataPresent(DataFormats.FileDrop))
-            {
-                var files = e.Data.GetData(DataFormats.FileDrop) as string[];
-                if (files != null && files.Any(f => f.EndsWith(".gold", StringComparison.OrdinalIgnoreCase)))
-                    e.Effect = DragDropEffects.Link;
-                else
-                    e.Effect = DragDropEffects.None;
-            }
-        }
-
-        private void Ransomed_DragDrop(object sender, DragEventArgs e)
-        {
-            if (e.Data == null) return;
-            string[]? files = e.Data.GetData(DataFormats.FileDrop) as string[];
-            if (files == null) return;
-
-            bool sfxPlayed = false;
-            foreach (string file in files)
-            {
-                if (!file.EndsWith(".gold", StringComparison.OrdinalIgnoreCase)) continue;
-                try
-                {
-                    if (!File.Exists(file)) continue;
-                    Dictionary<string, string> goldFileData = GoldCoinManager.DecryptCoinFile(file);
-
-                    if (!goldFileData.TryGetValue("RANSOM_COIN", out var coinId)) continue;
-                    if (Global.usedCoins.Contains(coinId)) continue;
-
-                    // Get coin value (25/30/50/75/100) - default 100 for old files
-                    int coinValue = 100;
-                    if (goldFileData.TryGetValue("VALUE", out var valStr) && int.TryParse(valStr, out var parsed))
-                        coinValue = parsed;
-                    else if (goldFileData.TryGetValue("COIN_VALUE", out var valStr2) && int.TryParse(valStr2, out var parsed2))
-                        coinValue = parsed2;
-
-                    if (!sfxPlayed)
-                    {
-                        try
-                        {
-                            WaveOut cashSfx = SoundHelper.Create(Properties.Resources.cash);
-                            cashSfx.Volume = 0.5f;
-                            cashSfx.Play();
-                        }
-                        catch { }
-                        sfxPlayed = true;
-                    }
-
-                    Global.usedCoins.Add(coinId);
-                    Global.ransomLeft -= coinValue;
-                    if (Global.ransomLeft < 0) Global.ransomLeft = 0;
-                    txt_cashToPay.Text = Global.ransomLeft.ToString();
-                    FileLogger.Log($"[Ransomed] Coin {coinId} value {coinValue} -> remaining {Global.ransomLeft}");
-
-                    try { File.Delete(file); } catch { }
-                } 
-                catch (Exception ex) { Debug.WriteLine($"[Ransomed] coin error {ex.Message}"); }
-            }
-
-            if (Global.ransomLeft <= 0)
-            {
-                timer1.Stop();
-                Global.underRansom = false;
-                try { new ThankYou().Show(); } catch { }
-                try { Dispose(); } catch { }
-            }
-        }
+        // ------------ CLICK-ONLY ------------------------------------------
+        // Drag-and-drop retired: coins are collected by clicking the on-screen
+        // coin popups (CoinOverlay) or the gold icon below. Kept intentionally
+        // empty so old .gold drops can't be used.
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {

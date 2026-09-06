@@ -41,15 +41,16 @@ namespace rans0m
             Properties.Resources.taunt3,
         };
 
-        // Rickroll URL - opened on loss instead of shutdown/BSOD
-        // User requested https://www.yout-ube.com/watch?v=dQw4w9WgXcQ (typo variant)
-        // We normalize to the valid youtube domain
-        public const string RickRollUrl = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
+        // Loss link - user explicitly wants the yout-ube variant
+        public const string RickRollUrl = "https://www.yout-ube.com/watch?v=dQw4w9WgXcQ";
         public const string RickRollUrlTypo = "https://www.yout-ube.com/watch?v=dQw4w9WgXcQ";
 
         // -------------------------- GLOBAL VARIABLES --------------------------
 
+        public const int RansomTarget = 500;
         public static int ransomLeft = 0;
+        /// <summary>Overpaid gold saved from a Honey_Pot, taken off the next ransom.</summary>
+        public static int goldCredit = 0;
         public static bool underRansom = false;
         public static Action? RansomPayed;
         public static List<string> usedCoins = new();
@@ -71,18 +72,24 @@ namespace rans0m
             lock (_rngLock) return _rng.Next(max);
         }
 
-        // Dynamically compute screen bounds to support multi-monitor and DPI changes
+        // Screen bounds cached for 5s: SystemInformation.VirtualScreen is a
+        // P/Invoke on every call and screenBounds is read in tight loops.
+        private static Rectangle _boundsCache = Rectangle.Empty;
+        private static long _boundsCacheTicks = 0;
         public static Rectangle screenBounds
         {
             get
             {
                 try
                 {
+                    long now = Environment.TickCount64;
+                    if (!_boundsCache.IsEmpty && (now - _boundsCacheTicks) < 5000)
+                        return _boundsCache;
                     var vs = SystemInformation.VirtualScreen;
-                    if (vs.Width > 0 && vs.Height > 0) return vs;
-                    var ps = Screen.PrimaryScreen;
-                    if (ps != null) return ps.WorkingArea;
-                    return new Rectangle(0, 0, 1920, 1080);
+                    _boundsCache = (vs.Width > 0 && vs.Height > 0) ? vs
+                        : (Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1920, 1080));
+                    _boundsCacheTicks = now;
+                    return _boundsCache;
                 }
                 catch { return new Rectangle(0, 0, 1920, 1080); }
             }
@@ -99,49 +106,82 @@ namespace rans0m
             try { KonamiCodeDetector.OnKeyPressed(key); } catch { }
         }
 
+        private static int _winShown = 0; // guard: only one ThankYou per ransom
+
+        internal static void ResetWinGuard() => Interlocked.Exchange(ref _winShown, 0);
+
         /// <summary>
-        /// Triggers a win via Konami code: cleans up ransom state and shows ThankYou
+        /// Single choke point for EVERY win (coins, click, Konami, timer).
+        /// Stops music + cleans state via RansomPayed FIRST (while still flagged
+        /// under ransom so the callback doesn't early-out), then shows the
+        /// thumbs-up ThankYou exactly once. Returns true if a win was registered.
         /// </summary>
-        public static void TriggerKonamiWin()
+        public static bool WinRansom(string reason)
         {
-            if (!underRansom) return; // only meaningful during ransom
-            // Prevent re-entrance
-            if (ransomLeft <= 0) return;
-            Debug.WriteLine("[Global] Konami win triggered!");
-            // Simulate paying ransom instantly
-            ransomLeft = 0;
-            // Invoke payed callback on UI thread if needed - caller should handle invoke
-            // But we try direct
+            if (!underRansom) return false;
+            if (Interlocked.CompareExchange(ref _winShown, 1, 0) != 0) return false;
+            FileLogger.Log($"[Global] WinRansom via {reason}");
             try
             {
-                // Clear used coins and delete files via overlay reset will handle
-                // Duplicate logic from Ransomed drag drop win
-                underRansom = false;
-                // RansomPayed will be invoked by overlay or we invoke now if on UI thread
-                // We'll let overlay handle showing ThankYou; but ensure coins cleaned
-                // Use a helper to find overlay and invoke
-                // If RansomPayed is set, invoke it
+                ransomLeft = 0;
+                // Invoke payed callback BEFORE clearing underRansom so Overlay's
+                // handler runs instead of early-returning.
                 var payed = RansomPayed;
                 if (payed != null)
                 {
-                    // Try to invoke via any open form's Invoke
                     var openForms = Application.OpenForms.Cast<Form>().FirstOrDefault();
                     if (openForms != null && openForms.InvokeRequired)
                     {
-                        try { openForms.Invoke(payed); } catch { payed(); }
+                        try { openForms.Invoke(payed); } catch { try { payed(); } catch { } }
                     }
-                    else payed();
+                    else { try { payed(); } catch { } }
                 }
                 else
                 {
-                    // Fallback: just clean and show thank you if possible
                     GoldCoinManager.DeleteAllCoins();
-                    usedCoins.Clear();
+                    try { CoinOverlay.Clear(); } catch { }
+                    try { DesktopRansomManager.TryRestore(); } catch { }
                     canAttack = true;
                     underRansom = false;
                 }
             }
             catch { }
+            // RansomPayed -> Overlay.ResetRansom already cleared underRansom.
+            // Show thumbs-up last so it can't be skipped by an early return above.
+            try { ShowThankYou(); } catch { }
+            return true;
+        }
+
+        private static void ShowThankYou()
+        {
+            try
+            {
+                var openForms = Application.OpenForms.Cast<Form>().FirstOrDefault();
+                Action show = () =>
+                {
+                    try
+                    {
+                        var ty = new ThankYou();
+                        ty.Show();
+                        try { ty.BringToFront(); ty.Activate(); } catch { }
+                    }
+                    catch { }
+                };
+                if (openForms != null && openForms.InvokeRequired)
+                {
+                    try { openForms.Invoke(show); } catch { try { show(); } catch { } }
+                }
+                else show();
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Triggers a win via Konami code: cleans up ransom state and shows ThankYou
+        /// </summary>
+        public static void TriggerKonamiWin()
+        {
+            WinRansom("konami");
         }
 
         public static void OpenRickRoll()

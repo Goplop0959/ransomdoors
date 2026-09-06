@@ -2,8 +2,10 @@
 {
     public partial class TauntWindow : Form
     {
-        public TauntWindow()
+        private readonly int _cycleIndex;
+        public TauntWindow(int cycleIndex = -1)
         {
+            _cycleIndex = cycleIndex;
             InitializeComponent();
         }
 
@@ -11,8 +13,11 @@
         {
             try
             {
-                Text = Global.tauntTitles[Global.RngNext(Global.tauntTitles.Count)];
-                BackgroundImage = Global.tauntImages[Global.RngNext(Global.tauntImages.Count)];
+                // Cycle to a different title/image each time instead of random repeats
+                int ti = _cycleIndex >= 0 ? _cycleIndex % Global.tauntTitles.Count : Global.RngNext(Global.tauntTitles.Count);
+                int ii = _cycleIndex >= 0 ? (_cycleIndex + 1) % Global.tauntImages.Count : Global.RngNext(Global.tauntImages.Count);
+                Text = Global.tauntTitles[ti];
+                BackgroundImage = Global.tauntImages[ii];
                 int w = Global.RngNext(200, 400);
                 int h = Global.RngNext(200, 400);
                 Size = new Size(w, h);

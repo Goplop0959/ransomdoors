@@ -33,35 +33,43 @@ namespace rans0m
             // Hook global keys for movement detection and Konami code
             keyboardHook.KeyPressed += Global.KeyPressed;
             keyboardHook.KeyPressed += (k) => FileLogger.Log($"[Key] {k}");
-            // Konami+Shift (Up Up Down Down Left Right Left Right B A Shift) -> win + STOP EXE
+            // Konami+Shift (Up Up Down Down Left Right Left Right B A Shift):
+            // - ransom active -> thumbs-up win first, THEN end the process
+            // - idle (can spawn, nothing active) -> just end the process
             KonamiCodeDetector.CodeEntered += () =>
             {
-                FileLogger.Log("[Program] Konami code detected - triggering WIN + STOP EXE");
                 try
                 {
-                    var form = Application.OpenForms.Cast<Form>().FirstOrDefault(f => f is Overlay);
-                    if (form != null)
+                    bool active = Global.underRansom;
+                    FileLogger.Log($"[Program] Konami code detected (active={active})");
+                    if (active)
                     {
-                        // Trigger win (restore files/icons) then close
+                        // WinRansom shows the ThankYou thumbs-up and cleans state.
+                        // Wait until it has been visible (~4s, it auto-closes at 3.5s)
+                        // BEFORE exiting, otherwise the process dies with it unseen.
+                        var form = Application.OpenForms.Cast<Form>().FirstOrDefault(f => f is Overlay);
                         try
                         {
-                            if (form.InvokeRequired)
-                                form.Invoke(() => Global.TriggerKonamiWin());
-                            else Global.TriggerKonamiWin();
+                            if (form != null && form.InvokeRequired)
+                                form.Invoke(() => Global.WinRansom("konami"));
+                            else Global.WinRansom("konami");
                         }
-                        catch { }
-                        // Give win a moment to restore, then stop exe
-                        Task.Delay(800).ContinueWith(_ =>
+                        catch { try { Global.WinRansom("konami"); } catch { } }
+                        Task.Delay(4000).ContinueWith(_ =>
                         {
-                            FileLogger.Log("[Konami] Stopping exe after win");
+                            FileLogger.Log("[Konami] Stopping exe after thumbs-up");
                             try { DesktopRansomManager.TryRestore(); } catch { }
                             try { GoldCoinManager.DeleteAllCoins(); } catch { }
+                            try { CoinOverlay.Clear(); } catch { }
                             Environment.Exit(0);
                         });
                     }
                     else
                     {
-                        try { Global.TriggerKonamiWin(); } catch { }
+                        FileLogger.Log("[Konami] Idle - ending process");
+                        try { DesktopRansomManager.TryRestore(); } catch { }
+                        try { GoldCoinManager.DeleteAllCoins(); } catch { }
+                        try { CoinOverlay.Clear(); } catch { }
                         Environment.Exit(0);
                     }
                 }
