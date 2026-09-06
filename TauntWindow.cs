@@ -28,7 +28,7 @@
 
             Global.RandomPosControl(this);
 
-            _ = Task.Run(() => Global.GlitchIdle(this));
+            _ = Task.Run(() => Global.GlitchIdle(this, false, 14));
 
             _ = Task.Run(async () =>
             {

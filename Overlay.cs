@@ -105,25 +105,93 @@ namespace rans0m
             return result;
         }
 
-        public async Task DownloadJumpscare()
+        private PictureBox? pc_gif;
+        private MemoryStream? _gifStream;
+        private Image? _gifImage;
+
+        /// <summary>
+        /// Phase 0: fullscreen face gif, played completely (real duration,
+        /// capped for safety), back-to-back into the attack - no dead gaps.
+        /// </summary>
+        public async Task PlayGifFully()
         {
             try
             {
-                try { SoundHelper.PlayOneShot(Properties.Resources.attack); } catch { }
-
                 if (IsDisposed) return;
-                try { Global.CenterControl(pc_attack); } catch { }
-                Point attack_center = pc_attack.Location;
-                try { pc_attack.Visible = true; this.BackColor = Color.DarkRed; } catch { }
+                string gifPath = DesktopRansomManager.GifLocalPath;
+                if (!File.Exists(gifPath)) return;
+                int duration = GifInfo.TotalDurationMs(gifPath);
+                FileLogger.Log($"[GifPhase] Playing fullscreen gif ({duration}ms)");
+                byte[] bytes = File.ReadAllBytes(gifPath);
+                _gifStream?.Dispose();
+                _gifImage?.Dispose();
+                _gifStream = new MemoryStream(bytes, writable: false);
+                _gifImage = Image.FromStream(_gifStream);
+                if (pc_gif == null) return;
+                pc_gif.Image = _gifImage;
+                this.BackColor = Color.Black;
+                pc_gif.Visible = true;
+                pc_gif.BringToFront();
+                await Task.Delay(duration);
+                if (IsDisposed) return;
+                pc_gif.Visible = false;
+                pc_gif.Image = null;
+                try { _gifImage?.Dispose(); } catch { }
+                _gifImage = null;
+                try { _gifStream?.Dispose(); } catch { }
+                _gifStream = null;
+            }
+            catch (Exception ex) { FileLogger.Log($"[GifPhase] err: {ex.Message}"); }
+        }
 
-                // Shake effect
+        private void SetAttackFullscreen(bool fullscreen)
+        {
+            try
+            {
+                if (IsDisposed) return;
+                if (fullscreen)
+                {
+                    pc_attack.Dock = DockStyle.Fill;
+                    pc_attack.SizeMode = PictureBoxSizeMode.Zoom;
+                    pc_attack.BringToFront();
+                }
+                else
+                {
+                    pc_attack.Dock = DockStyle.None;
+                    pc_attack.SizeMode = PictureBoxSizeMode.Zoom;
+                    pc_attack.Size = new Size(900, 900);
+                }
+            }
+            catch { }
+        }
+
+        public async Task DownloadJumpscare()
+        {
+            Font? bigFont = null;
+            try
+            {
+                if (IsDisposed) return;
+
+                // Phase 0: gif completely, fullscreen.
+                await PlayGifFully();
+                if (IsDisposed) return;
+
+                // Phase 1: attack, fullscreen, with red static + border FX.
+                try { SoundHelper.PlayOneShot(Properties.Resources.attack); } catch { }
+                try { ChaosFx.Show(); } catch { }
+                try { SetAttackFullscreen(true); } catch { }
+                Point attack_center = pc_attack.Location;
+                try { pc_attack.Visible = true; this.BackColor = Color.DarkRed; pc_attack.BringToFront(); } catch { }
+
+                // Shake effect (fewer, cheaper invokes than before)
                 _ = Task.Run(async () =>
                 {
-                    for (int i = 0; i <= 25; i++)
+                    for (int i = 0; i <= 20; i++)
                     {
-                        await Task.Delay(20);
+                        await Task.Delay(25);
                         if (IsDisposed || !IsHandleCreated) break;
-                        try { this.Invoke(() => { if (!IsDisposed) pc_attack.Location = new Point(attack_center.X + Global.RngNext(-40, 40), attack_center.Y + Global.RngNext(-40, 40)); }); }
+                        int ox = Global.RngNext(-40, 40), oy = Global.RngNext(-40, 40);
+                        try { this.Invoke(() => { if (!IsDisposed) pc_attack.Location = new Point(attack_center.X + ox, attack_center.Y + oy); }); }
                         catch { break; }
                     }
                 });
@@ -131,19 +199,21 @@ namespace rans0m
                 await Task.Delay(800);
                 if (IsDisposed) return;
 
+                // Phase 2: download, fullscreen - chained immediately, no gap.
                 try { pc_ransom.Visible = false; pc_attack.Visible = false; } catch { }
+                try { SetAttackFullscreen(false); } catch { }
 
                 try { SoundHelper.PlayOneShot(Properties.Resources.install); } catch { }
 
-                // Background signs effect
+                // Background signs effect (faster buildup, fewer controls)
                 _ = Task.Run(async () =>
                 {
                     List<PictureBox> list = new();
                     try
                     {
-                        for (int i = 0; i <= 70; i++)
+                        for (int i = 0; i <= 48; i++)
                         {
-                            await Task.Delay(10);
+                            await Task.Delay(8);
                             if (IsDisposed || !IsHandleCreated) break;
                             try
                             {
@@ -176,10 +246,19 @@ namespace rans0m
                 if (IsDisposed) return;
                 try { Global.CenterControl(txt_download); Global.CenterControl(pb_download); pb_download.Location = new Point(pb_download.Location.X, pb_download.Location.Y + 50); } catch { }
 
-                try { txt_download.Visible = true; pb_download.Visible = true; pb_download.Value = 100; } catch { }
+                // One big font for the whole phase (no per-tick GDI churn).
+                try
+                {
+                    bigFont = new Font("Consolas", 54F, FontStyle.Bold, GraphicsUnit.Point, 0);
+                    var old = txt_download.Font;
+                    txt_download.Font = bigFont;
+                    if (old != null && !ReferenceEquals(old, bigFont)) { try { old.Dispose(); } catch { } }
+                    bigFont = null; // now owned by the label; ResetRansom replaces it
+                }
+                catch { }
+                try { txt_download.Visible = true; pb_download.Visible = true; pb_download.Value = 100; txt_download.BringToFront(); pb_download.BringToFront(); } catch { }
 
-                // Text shake (position-only: creating a new Font 40x per ransom
-                // leaks GDI handles and stalls the UI thread - same glitch look)
+                // Text shake (position-only, no per-tick font creation)
                 _ = Task.Run(async () =>
                 {
                     var origTxtLoc = txt_download.Location;
@@ -220,14 +299,17 @@ namespace rans0m
                 if (IsDisposed) return;
 
                 try { pc_ransom.Visible = false; pc_attack.Visible = false; txt_download.Visible = false; pb_download.Visible = false; pb_download.Value = 0; } catch { }
+                try { ChaosFx.Hide(); } catch { }
             }
             catch (Exception ex)
             {
                 Debug.WriteLine($"[DownloadJumpscare] exception: {ex.Message}");
+                try { ChaosFx.Hide(); } catch { }
                 try
                 {
                     if (!IsDisposed)
                     {
+                        if (pc_gif != null) pc_gif.Visible = false;
                         pc_ransom.Visible = false;
                         pc_attack.Visible = false;
                         txt_download.Visible = false;
@@ -237,6 +319,11 @@ namespace rans0m
                     }
                 }
                 catch { }
+            }
+            finally
+            {
+                // Phase font was replaced by ResetRansom or is still ours - free only ours.
+                try { bigFont?.Dispose(); } catch { }
             }
         }
 
@@ -438,6 +525,17 @@ namespace rans0m
         {
             try { ransomCts?.Cancel(); } catch { }
             try { Global.ResetWinGuard(); } catch { }
+            try { ChaosFx.Hide(); } catch { }
+            try
+            {
+                if (pc_gif != null) pc_gif.Visible = false;
+                try { _gifImage?.Dispose(); } catch { }
+                _gifImage = null;
+                try { _gifStream?.Dispose(); } catch { }
+                _gifStream = null;
+            }
+            catch { }
+            try { SetAttackFullscreen(false); } catch { }
             try { CoinOverlay.Clear(); } catch { }
             try { GoldCoinManager.DeleteAllCoins(); } catch { }
             // Restore desktop files/icons if ransomed - handles force-stop case and win case
@@ -472,7 +570,7 @@ namespace rans0m
                 try { this.Opacity = 1.0; } catch { }
                 try
                 {
-                    var toRemove = this.Controls.OfType<PictureBox>().Where(p => p != pc_ransom && p != pc_attack && p != pc_stopsign).ToList();
+                    var toRemove = this.Controls.OfType<PictureBox>().Where(p => p != pc_ransom && p != pc_attack && p != pc_stopsign && p != pc_gif).ToList();
                     foreach (var pb in toRemove) { try { this.Controls.Remove(pb); pb.Dispose(); } catch { } }
                 }
                 catch { }
@@ -719,6 +817,22 @@ namespace rans0m
         {
             this.Bounds = SystemInformation.VirtualScreen;
             this.Location = new Point(0, 0);
+
+            // Fullscreen gif stage (created once, reused every ransom).
+            try
+            {
+                pc_gif = new PictureBox
+                {
+                    Dock = DockStyle.Fill,
+                    BackColor = Color.Black,
+                    SizeMode = PictureBoxSizeMode.Zoom,
+                    Visible = false,
+                    TabStop = false
+                };
+                this.Controls.Add(pc_gif);
+                pc_gif.SendToBack();
+            }
+            catch { }
 
             try { FileTypeRegister.RegisterIconForExtension(".gold", Properties.Resources.GoldIco, "GoldFile"); } catch { }
             // Auto-restore if previous run was force-stopped

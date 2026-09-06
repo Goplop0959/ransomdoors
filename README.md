@@ -25,7 +25,8 @@
 - **First ransom 9-15s** (`Overlay.cs`), then 78-600s (`Global.cs` `minRansomTime` / `maxRansomTime`).
 - **Mouse 1cm threshold** (movement under ~40px doesn't trigger), single-ransom gate, face hidden during idle, `Ransomed` top-most fix.
 - **Click-only coins, no drag-and-drop:** 8 clickable coin popups spawn on top of the desktop icons. Each shows its `Gold_X.png` face (5 / 10 / 25 / 50 / 75 / 100). A coin popup has a 5% chance to be the `Honey_Pot.png`, which pays the full 500 requirement — overpaid gold is saved as credit and taken off the next ransom.
-- **7 taunt popups** kept on screen at once, each replaced by a different one when closed.
+- **7 taunt popups** kept on screen at once, each replaced by a different one when closed — and they drift around, not just jitter in place.
+- **Zero-delay fullscreen sequence:** the face gif plays completely fullscreen, then the attack hits fullscreen, then the download horror fullscreen, chained back-to-back with a click-through red static + animated pixel-dot border frame over everything (ported from the Python reference sim).
 - **Self-placing coins:** coin popups never spawn under another popup, a coin covered later by a popup is deleted, and replacements regenerate at new free spots until the target count is back.
 - **Desktop prank (reversible):** on infection, renames Desktop files to `.Ransom`, swaps file icons (via derived `.ico`), folder icons (via `desktop.ini`), loose images inside Edge / Chrome / Firefox profiles, pinned taskbar shortcut icons, and running app window icons — and animates the wallpaper through the face gif's frames at native resolution. Every op is per-file `try` guarded, strictly bounded (counts/sizes/depths capped for speed), and recorded in `restore.json` in the unpack folder. Winning — or just launching the app again if it was force-stopped — auto-restores everything and deletes the JSON.
 - **Audio that finishes:** all players are rooted in a central `AudioEngine` (GC can't cut sounds short), resource bytes are preloaded at startup, and failed plays retry once (channel-per-class design inspired by the Python reference sim).
@@ -65,6 +66,7 @@ The app runs from the tray (`RANS0M` icon, Close disabled while a ransom is acti
 ## Credits
 
 - **Original:** [Ixars/ransomdoors](https://github.com/Ixars/ransomdoors) (Ixars)
+- Effect design (border frame, red static, rooted audio, restore manifest) inspired by [masashira0212-stack/Doors-Ransom-A-90-Simulation](https://github.com/masashira0212-stack/Doors-Ransom-A-90-Simulation)
 - **NAudio** for audio, **Doors** by LSPLASH
 
 ## License
