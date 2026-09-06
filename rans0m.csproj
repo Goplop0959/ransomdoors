@@ -27,20 +27,13 @@
     <Content Include="main_ico.ico" />
   </ItemGroup>
 
-  <!-- Clickable coin faces + honey pot: loose files next to the single-file exe -->
+  <!-- Clickable coin faces + honey pot: embedded in the single-file exe,
+       unpacked at runtime to a created folder in %TEMP% (see AssetManager).
+       Nothing loose needs to ship beside the exe. -->
   <ItemGroup>
-    <Content Include="Gold_*.png">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
-    </Content>
-    <Content Include="Honey_Pot.png">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
-    </Content>
-    <Content Include="Random_A-90.gif">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
-    </Content>
+    <EmbeddedResource Include="Gold_*.png" />
+    <EmbeddedResource Include="Honey_Pot.png" />
+    <EmbeddedResource Include="Random_A-90.gif" />
   </ItemGroup>
 
   <ItemGroup>

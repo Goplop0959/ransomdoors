@@ -653,10 +653,13 @@ namespace rans0m
                 catch (Exception ex) { FileLogger.Log($"[RansomLoop] outer ex: {ex.Message}"); break; }
 
                 // After spawn, if dodge, face should be hidden again; if attack, underRansom true
-                // Loop will then delay again with face hidden (if not underRansom)
+                // Loop will then delay again with face hidden (if not underRansom).
+                // Spawn is fire-and-forget, so skip while it still holds the gate -
+                // otherwise we'd hide the warning face mid-phase.
                 try
                 {
-                    if (!Global.underRansom && IsHandleCreated && !IsDisposed)
+                    if (Volatile.Read(ref _spawnGate) != 0) FileLogger.Log("[RansomLoop] Spawn still running, skipping stray-face check");
+                    else if (!Global.underRansom && IsHandleCreated && !IsDisposed)
                     {
                         this.Invoke(new Action(() =>
                         {

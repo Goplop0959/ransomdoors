@@ -7,7 +7,7 @@
 ## What changed vs original
 
 - **No shutdown / no BSOD.** On loss it opens `https://www.yout-ube.com/watch?v=dQw4w9WgXcQ` in the default browser (`Global.cs` `OpenRickRoll`) — `IntoCriticalProcess` / `shutdown /s /t 0` removed.
-- **Standalone single-file EXE.** `rans0m.csproj` sets `PublishSingleFile` / `SelfContained` / `win-x64` / `IncludeNativeLibrariesForSelfExtract` — `RansomDoors-Safe.exe` (~70 MB) needs no .NET installed. All sidecar files (`Random_A-90.gif`, `Gold_*.png`, `Honey_Pot.png`, `restore.json`) live in the same folder as the exe, wherever you put it — no fixed install path is assumed.
+- **Standalone single-file EXE.** `rans0m.csproj` sets `PublishSingleFile` / `SelfContained` / `win-x64` / `IncludeNativeLibrariesForSelfExtract` — `RansomDoors-Safe.exe` (~70 MB) needs no .NET installed. The coin faces, honey pot and face gif are embedded inside it: on launch it unpacks them to a created `%TEMP%\Ransom_A-90` folder (plus derived `.ico` / `.bmp` and `restore.json`). The release contains only the exe — nothing else needs to sit beside it, and no fixed install path is assumed.
 - **Konami kill/win:** `Up Up Down Down Left Right Left Right B A Shift` (Shift = Start) via `KonamiCodeDetector.cs` — if a ransom is active it shows the thumbs-up win first, then stops the exe; if idle it just stops the exe (`Program.cs`).
 - **First ransom 9-15s** (`Overlay.cs`), then 78-600s (`Global.cs` `minRansomTime` / `maxRansomTime`).
 - **Mouse 1cm threshold** (movement under ~40px doesn't trigger), single-ransom gate, face hidden during idle, `Ransomed` top-most fix.
@@ -36,13 +36,12 @@ dotnet run --project rans0m.csproj
 
 # Standalone single-file (no .NET needed on target)
 dotnet publish -c Release -r win-x64 --self-contained true
-# -> single ransom.exe plus Gold_*.png / Honey_Pot.png beside it;
-#    rename/copy to RansomDoors-Safe.exe to match the release asset
+# -> a single ransom.exe; rename/copy to RansomDoors-Safe.exe
 ```
 
 Or open `rans0m.slnx` in Visual Studio → Build → Publish → Folder, `Self-contained`, `Produce single file`.
 
-The app runs from the tray (`RANS0M` icon, Close disabled while a ransom is active). `Random_A-90.gif` is auto-created from the embedded face art if missing, in the same folder as the exe.
+The app runs from the tray (`RANS0M` icon, Close disabled while a ransom is active). `Random_A-90.gif` ships embedded and is unpacked to `%TEMP%\Ransom_A-90` (falling back to generating it from the embedded face art).
 
 ## Configuration
 

@@ -35,7 +35,7 @@ namespace rans0m
                 Image img;
                 try
                 {
-                    string path = Path.Combine(AppContext.BaseDirectory, name);
+                    string path = Path.Combine(AssetManager.Dir, name);
                     if (File.Exists(path))
                     {
                         // Load via bytes so the file isn't locked on disk

