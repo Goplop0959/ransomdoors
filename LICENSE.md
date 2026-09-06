@@ -81,10 +81,16 @@ FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHOR
 BE LIABLE FOR ANY CLAIM, DAMAGES, DATA LOSS, OR OTHER LIABILITY ARISING FROM
 THE USE OF THE SOFTWARE.
 
-This Software intentionally simulates disruptive behavior (screen takeover,
-forced shutdown, and in some configurations a deliberate system crash) as
-part of its prank/jumpscare concept. **Only run this on a machine you own or
-have explicit permission to use this way, save your work first, and use it
-at your own risk.** This is not malware and is not intended for use against
-anyone without their knowledge and consent.
+This Software intentionally simulates disruptive behavior as part of its
+prank/jumpscare concept. Depending on configuration this includes: full-
+screen takeover, loud sounds, temporary Desktop file renames (reversible),
+temporary icon / image / taskbar-icon / wallpaper changes (all recorded for
+automatic restore), and opening a link in the default browser. **Only run
+this on a machine you own or have explicit permission to use this way, save
+your work first, close anything you cannot afford to have covered, and use
+it at your own risk. Never run it on someone else's machine without their
+informed consent.** This is not malware — it does not steal, upload,
+genuinely encrypt, or spread anything, and every local change it makes is
+designed to be undone — but it is still your responsibility to use it
+consensually and lawfully.
 

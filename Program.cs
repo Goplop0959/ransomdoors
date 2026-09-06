@@ -27,6 +27,24 @@ namespace rans0m
 
             // Unpack embedded assets to the created %TEMP%\Ransom_A-90 folder
             try { AssetManager.EnsureAssets(); } catch { }
+            // Warm everything in the background so the first ransom has no hitches:
+            // audio bytes decoded, wallpaper frames pre-extracted at native res.
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    AudioEngine.Preload(
+                        ("spawn", Properties.Resources.spawn),
+                        ("attack", Properties.Resources.attack),
+                        ("install", Properties.Resources.install),
+                        ("cash", Properties.Resources.cash),
+                        ("layer1", Properties.Resources.layer1),
+                        ("layer2", Properties.Resources.layer2),
+                        ("layer3", Properties.Resources.layer3));
+                }
+                catch { }
+                try { WallpaperAnimator.Prepare(); } catch { }
+            });
             // Auto-restore if previous run was force-stopped and left restore.json (file ops revert, icons, wallpaper)
             try { DesktopRansomManager.TryRestoreIfNeeded(); } catch (Exception ex) { Debug.WriteLine($"[Program] RestoreIfNeeded fail: {ex.Message}"); }
             // Ensure gif placeholder exists for future ransom

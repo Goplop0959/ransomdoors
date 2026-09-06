@@ -39,11 +39,10 @@ namespace rans0m
         public async Task<bool> RansomWarning()
         {
             bool result = false;
-            WaveOut? spawnSound = null;
             try
             {
                 FileLogger.Log("[RansomWarning] start");
-                try { spawnSound = SoundHelper.Create(Properties.Resources.spawn); spawnSound.Play(); FileLogger.Log("[RansomWarning] spawn sound played"); } catch (Exception ex) { FileLogger.Log($"[RansomWarning] spawn sound fail: {ex.Message}"); }
+                try { SoundHelper.PlayOneShot(Properties.Resources.spawn); FileLogger.Log("[RansomWarning] spawn sound played"); } catch (Exception ex) { FileLogger.Log($"[RansomWarning] spawn sound fail: {ex.Message}"); }
 
                 try { Global.RandomPosControl(pc_ransom); pc_ransom.Visible = true; FileLogger.Log($"[RansomWarning] face shown at {pc_ransom.Location}"); } catch (Exception ex) { FileLogger.Log($"[RansomWarning] face show fail: {ex.Message}"); }
 
@@ -103,10 +102,6 @@ namespace rans0m
                 catch { }
                 result = false;
             }
-            finally
-            {
-                try { spawnSound?.Dispose(); } catch { }
-            }
             return result;
         }
 
@@ -114,8 +109,7 @@ namespace rans0m
         {
             try
             {
-                WaveOut? attackSound = null;
-                try { attackSound = SoundHelper.Create(Properties.Resources.attack); attackSound.Play(); } catch { }
+                try { SoundHelper.PlayOneShot(Properties.Resources.attack); } catch { }
 
                 if (IsDisposed) return;
                 try { Global.CenterControl(pc_attack); } catch { }
@@ -139,8 +133,7 @@ namespace rans0m
 
                 try { pc_ransom.Visible = false; pc_attack.Visible = false; } catch { }
 
-                WaveOut? installSound = null;
-                try { installSound = SoundHelper.Create(Properties.Resources.install); installSound.Play(); } catch { }
+                try { SoundHelper.PlayOneShot(Properties.Resources.install); } catch { }
 
                 // Background signs effect
                 _ = Task.Run(async () =>
@@ -275,10 +268,18 @@ namespace rans0m
                 catch { }
             });
 
+            // Tracked players stay rooted in AudioEngine until stopped, so the
+            // music layers can never be cut short by the GC.
             WaveOut? layer1 = null, layer2 = null, layer3 = null;
-            try { layer1 = SoundHelper.Create(Properties.Resources.layer1); } catch { }
-            try { layer2 = SoundHelper.Create(Properties.Resources.layer2); } catch { }
-            try { layer3 = SoundHelper.Create(Properties.Resources.layer3); } catch { }
+            try { layer1 = AudioEngine.PrepareTracked(Properties.Resources.layer1, 0.64f); } catch { }
+            try { layer2 = AudioEngine.PrepareTracked(Properties.Resources.layer2, 0.64f); } catch { }
+            try { layer3 = AudioEngine.PrepareTracked(Properties.Resources.layer3, 0.64f); } catch { }
+            void StopLayers()
+            {
+                AudioEngine.StopTracked(layer1);
+                AudioEngine.StopTracked(layer2);
+                AudioEngine.StopTracked(layer3);
+            }
 
             // Apply saved Honey_Pot overpay credit from the previous ransom
             int credit = Interlocked.Exchange(ref Global.goldCredit, 0);
@@ -299,14 +300,7 @@ namespace rans0m
             Global.RansomPayed = () =>
             {
                 try { token.ThrowIfCancellationRequested(); } catch { return; }
-                try
-                {
-                    layer1?.Stop(); layer2?.Stop(); layer3?.Stop();
-                    try { layer1?.Dispose(); } catch { }
-                    try { layer2?.Dispose(); } catch { }
-                    try { layer3?.Dispose(); } catch { }
-                }
-                catch { }
+                try { StopLayers(); } catch { }
                 if (IsDisposed || !IsHandleCreated) return;
                 try { this.Invoke((MethodInvoker)ResetRansom); } catch { try { ResetRansom(); } catch { } }
             };
@@ -374,27 +368,26 @@ namespace rans0m
             }
             catch (Exception ex) { Debug.WriteLine($"[Ransomed] form show failed: {ex.Message}"); }
 
-            try { layer1?.Play(); } catch { }
+            try { AudioEngine.PlayTracked(layer1); } catch { }
             try { await Task.Delay(26000, token); } catch { }
-            if (!Global.underRansom || token.IsCancellationRequested) { try { layer1?.Dispose(); layer2?.Dispose(); layer3?.Dispose(); } catch { } return false; }
+            if (!Global.underRansom || token.IsCancellationRequested) { try { StopLayers(); } catch { } return false; }
 
-            try { layer2?.Play(); } catch { }
+            try { AudioEngine.PlayTracked(layer2); } catch { }
             try { await Task.Delay(26000, token); } catch { }
-            if (!Global.underRansom || token.IsCancellationRequested) { try { layer1?.Dispose(); layer2?.Dispose(); layer3?.Dispose(); } catch { } return false; }
+            if (!Global.underRansom || token.IsCancellationRequested) { try { StopLayers(); } catch { } return false; }
 
-            try { layer3?.Play(); } catch { }
+            try { AudioEngine.PlayTracked(layer3); } catch { }
             try { await Task.Delay(26000, token); } catch { }
-            if (!Global.underRansom || token.IsCancellationRequested) { try { layer1?.Dispose(); layer2?.Dispose(); layer3?.Dispose(); } catch { } return false; }
+            if (!Global.underRansom || token.IsCancellationRequested) { try { StopLayers(); } catch { } return false; }
 
             try { ransomedForm?.Close(); ransomedForm?.Dispose(); } catch { }
-            try { layer1?.Dispose(); layer2?.Dispose(); layer3?.Dispose(); } catch { }
+            try { StopLayers(); } catch { }
             return true;
         }
 
         public async Task LoseGame()
         {
-            WaveOut? attackSound = null;
-            try { attackSound = SoundHelper.Create(Properties.Resources.attack); attackSound.Play(); } catch { }
+            try { SoundHelper.PlayOneShot(Properties.Resources.attack); } catch { }
 
             if (!IsDisposed)
             {
@@ -532,6 +525,9 @@ namespace rans0m
                     await Task.Run(() => DesktopRansomManager.TryRansomDesktop());
                 }
                 catch (Exception ex) { Debug.WriteLine($"[Spawn] DesktopRansom ex: {ex.Message}"); }
+
+                // Animated background: cycle the gif frames until win/restore.
+                try { WallpaperAnimator.Start(); } catch { }
 
                 List<GoldCoinManager.CoinDef> coins = new();
                 try { coins = GoldCoinManager.CreateRandomCoins(8); } catch (Exception ex) { Debug.WriteLine($"[Spawn] GoldCoin ex: {ex.Message}"); }

@@ -3,6 +3,19 @@
 > **Fork** of **[Ixars/ransomdoors](https://github.com/Ixars/ransomdoors)**. Original concept, entity design and base code by **Ixars** — this fork keeps the original spirit but makes it **safe, debugged and standalone**.
 >
 > **Doors** by **LSPLASH** — RANSOM/A-90 is their original entity. Unofficial fan recreation, not affiliated.
+>
+> ## ⚠️ Disclaimer — read before running
+>
+> This is a **consensual prank program**. It temporarily takes over your
+> screen, renames files on your Desktop (reversibly), swaps icons, images,
+> taskbar icons and wallpaper (all restored automatically on win, loss
+> cleanup, or next launch), plays loud sounds, and opens a link in your
+> browser on loss. **Only run it on a computer you own, save your work
+> first, close anything you can't afford to have covered, and never run it
+> on someone else's machine without their informed consent.** It does not
+> steal, upload, encrypt-for-real, or spread anything — every change is
+> local and recorded in `restore.json` so it can be undone. See
+> `LICENSE.md` for the full terms. You run it at your own risk.
 
 ## What changed vs original
 
@@ -12,9 +25,11 @@
 - **First ransom 9-15s** (`Overlay.cs`), then 78-600s (`Global.cs` `minRansomTime` / `maxRansomTime`).
 - **Mouse 1cm threshold** (movement under ~40px doesn't trigger), single-ransom gate, face hidden during idle, `Ransomed` top-most fix.
 - **Click-only coins, no drag-and-drop:** 8 clickable coin popups spawn on top of the desktop icons. Each shows its `Gold_X.png` face (5 / 10 / 25 / 50 / 75 / 100). A coin popup has a 5% chance to be the `Honey_Pot.png`, which pays the full 500 requirement — overpaid gold is saved as credit and taken off the next ransom.
-- **5 taunt popups** kept on screen at once, each replaced by a different one when closed.
-- **Desktop prank (reversible):** on infection, renames Desktop files to `.Ransom`, swaps file icons (via derived `.ico`), folder icons (via `desktop.ini`), wallpaper (via native-res `.bmp`, original style preserved), and drops the face image over Desktop pictures. Every op is per-file `try` guarded and recorded in `restore.json` next to the exe. Winning — or just launching the app again if it was force-stopped — auto-restores everything and deletes the JSON.
-- Bugfixes: thread-safe RNG, single-file-safe `KeyboardHook`,MP3-capable `SoundHelper`, registry/icon leaks, font/GDI leaks, etc.
+- **7 taunt popups** kept on screen at once, each replaced by a different one when closed.
+- **Self-placing coins:** coin popups never spawn under another popup, a coin covered later by a popup is deleted, and replacements regenerate at new free spots until the target count is back.
+- **Desktop prank (reversible):** on infection, renames Desktop files to `.Ransom`, swaps file icons (via derived `.ico`), folder icons (via `desktop.ini`), loose images inside Edge / Chrome / Firefox profiles, pinned taskbar shortcut icons, and running app window icons — and animates the wallpaper through the face gif's frames at native resolution. Every op is per-file `try` guarded, strictly bounded (counts/sizes/depths capped for speed), and recorded in `restore.json` in the unpack folder. Winning — or just launching the app again if it was force-stopped — auto-restores everything and deletes the JSON.
+- **Audio that finishes:** all players are rooted in a central `AudioEngine` (GC can't cut sounds short), resource bytes are preloaded at startup, and failed plays retry once (channel-per-class design inspired by the Python reference sim).
+- Bugfixes + optimizations: thread-safe RNG, single-file-safe `KeyboardHook`, MP3-capable audio, registry/icon leaks, font/GDI leaks, cached screen bounds, consolidated UI timers, background-thread I/O, etc.
 
 ## Original warning (now safe)
 

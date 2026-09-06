@@ -143,6 +143,22 @@ namespace rans0m
         public sealed record CollectResult(int Value, bool IsHoneyPot, int SavedCredit);
 
         /// <summary>
+        /// Discard a coin file with NO credit (used when a popup covers its
+        /// on-screen coin - the coin is deleted, never paid out).
+        /// </summary>
+        public static void DiscardCoinFile(string? filePath)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(filePath)) return;
+                if (!filePath.EndsWith(".gold", StringComparison.OrdinalIgnoreCase)) return;
+                try { if (File.Exists(filePath)) File.Delete(filePath); } catch { }
+                try { RemoveFromRegistryList(filePath); } catch { }
+            }
+            catch { }
+        }
+
+        /// <summary>
         /// Collect a single coin by file path (click-to-collect, no drag needed).
         /// Honey_Pot pays the FULL remaining requirement; any amount beyond what
         /// is needed is saved into Global.goldCredit for the next ransom.
